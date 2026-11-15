@@ -7,7 +7,7 @@
 <style>
   :root { --bg:#0d0f14; --panel:#191c24ee; --line:#343947; --ink:#ece8df; --dim:#9a9fae; --acc:#f2b84b; }
   html,body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui,sans-serif; }
-  canvas { display:block; }
+  canvas { display:block; touch-action:none; } /* que tocar la mesa no desplace ni haga zoom de la página */
   button,input,select { font:inherit; color:var(--ink); background:#242833; border:1px solid var(--line); border-radius:8px; padding:7px 11px; }
   button { cursor:pointer; }
   button:hover { border-color:var(--acc); }
@@ -45,6 +45,22 @@
   dialog::backdrop { background:#000a; }
   dialog small { color:var(--dim); display:block; margin-top:4px; }
   dialog menu { display:flex; gap:8px; justify-content:flex-end; padding:0; margin:18px 0 0; }
+  #bMenu { display:none; position:fixed; top:8px; left:8px; z-index:4; font-size:18px; padding:6px 13px; }
+  @media (max-width: 760px) {
+    body.playing #bMenu { display:block; }
+    #bar { display:none; position:fixed; top:54px; left:8px; right:8px; z-index:4; max-height:65vh; overflow:auto; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px; }
+    #bar.open { display:flex; }
+    #bar button, #bar select { padding:10px 12px; }
+    #me { width:84px; height:63px; top:8px; right:8px; }
+    #log { top:54px; left:8px; max-width:calc(100vw - 112px); font-size:12px; }
+    #log li:nth-last-child(n+4) { display:none; } /* en el celular, sólo las últimas 3 */
+    #help { font-size:12px; bottom:8px; transition:opacity 1s; }
+    #help.gone { opacity:0; pointer-events:none; }
+    #tip { bottom:46px; font-size:12px; }
+    #status { top:54px; }
+    #bBack { top:auto; bottom:52px; }
+    #menu button { padding:11px 12px; }
+  }
 </style>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script type="importmap">
@@ -56,6 +72,7 @@
 </script>
 </head>
 <body>
+<button id="bMenu" aria-label="Menú" aria-expanded="false" aria-controls="bar">☰</button>
 <div id="bar" hidden>
   <select id="things" aria-label="Agregar un objeto suelto">
     <option value="">Cositas…</option><option value="std">Mazo de póker</option><option value="pawn">Peón</option><option value="coin">Moneda</option>
@@ -298,7 +315,8 @@ function labelTex(text, bg, w = 320, h = 240) {
 
 // ---------- escena ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true })
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap
+const coarse = matchMedia('(pointer: coarse)').matches // pantalla táctil: menos resolución, sombras más chicas
+renderer.setPixelRatio(Math.min(devicePixelRatio, coarse ? 1.5 : 2)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap
 document.body.prepend(renderer.domElement)
 const cvs = renderer.domElement
 const scene = new THREE.Scene(); scene.background = new THREE.Color('#0d0f14'); scene.fog = new THREE.Fog('#0d0f14', 45, 120)
@@ -307,12 +325,12 @@ const controls = new OrbitControls(camera, cvs)
 controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE }
 controls.enablePan = true; controls.screenSpacePanning = false; controls.zoomToCursor = true; const fv = new THREE.Vector3(); controls.maxPolarAngle = 1.45; controls.minDistance = 4; controls.maxDistance = 30; controls.target.set(0, 1.5, 0)
 scene.add(new THREE.HemisphereLight('#cfd8ff', '#20140c', 1.1))
-const sun = new THREE.DirectionalLight('#fff1dc', 2.2); sun.position.set(4, 16, 6); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048)
+const sun = new THREE.DirectionalLight('#fff1dc', 2.2); sun.position.set(4, 16, 6); sun.castShadow = true; sun.shadow.mapSize.set(coarse ? 1024 : 2048, coarse ? 1024 : 2048)
 Object.assign(sun.shadow.camera, { left: -10, right: 10, top: 10, bottom: -10, near: 1, far: 40 }); scene.add(sun)
 const felt = new THREE.Mesh(new THREE.CylinderGeometry(R, R, .4, 64), new THREE.MeshStandardMaterial({ color: '#1f5c4a', roughness: 1 })); felt.position.y = -.2; felt.receiveShadow = true
 const rim = new THREE.Mesh(new THREE.CylinderGeometry(R + .4, R + .4, .5, 64), new THREE.MeshStandardMaterial({ color: '#3a2416', roughness: .6 })); rim.position.y = -.27
 rim.castShadow = true; scene.add(felt, rim)
-function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix() }
+function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.fov = camera.aspect < 1 ? Math.min(85, 55 / Math.max(camera.aspect, .65)) : 55; camera.updateProjectionMatrix() } // celular vertical: más ángulo para que entre la mesa
 addEventListener('resize', resize); resize()
 
 // ---------- vista de objetos (todos los jugadores, anfitrión incluido) ----------
@@ -1333,6 +1351,7 @@ function showSnap() {
   const sn = v => Math.max(0, Math.min(n - 1, Math.round(v / step + (n - 1) / 2))) * step - (n - 1) / 2 * step // igual que el encastre del anfitrión
   snapMark.position.copy(bd.mesh.localToWorld(sm.set(sn(l.x), .075, sn(l.z)))); snapMark.scale.setScalar(step / .75); snapMark.visible = true
 }
+let lpT = null, touchN = 0, wholeNext = null
 let holdSet = null, pending = null, prec = null, lift = 0, clickT = null, rDown = null, focus = null, lastWheel = 0, menuPoint = null
 const PRECISE = ['block', 'stick'] // estos se mueven siempre en precisión; el resto, con Alt
 const flippable = d => !!d && (d.kind === 'deck' || d.kind === 'tile' || !!d.c2 || d.tex === 'coin')
@@ -1351,6 +1370,7 @@ function aimPtr() { // a dónde apunta la mano
   ptrDirty = true
 }
 function startGrab() { // el arrastre empieza recién cuando el mouse se movió: así un clic quieto queda libre para otras cosas
+  clearTimeout(lpT)
   const { id, shift, alt, ctrl } = pending; pending = null
   const v = view.get(id); if (!v) return
   holding = true; lift = 0; prec = null; holdSet = v.d.kind === 'board' ? null : v.d.set; controls.enableZoom = false; cvs.style.cursor = 'grabbing'
@@ -1400,7 +1420,7 @@ function openMenu(x, y, id) {
     if (d.kind === 'die') it('Tirar todos los dados', '', act('rollall'))
     if (flippable(d)) it('Voltear', 'F · doble clic', act('flip'))
     if (d.kind !== 'die') { it('Girar a la izquierda', 'Q · rueda', act('rotL')); it('Girar a la derecha', 'E · rueda', act('rotR')) }
-    if (d.kind === 'deck' && d.n > 1) { it('Cortar', 'C · Ctrl+arrastrar', act('cut')); it('Cortar y completar', '', act('cutc')) }
+    if (d.kind === 'deck' && d.n > 1) { it('Mover el mazo entero', 'Shift+arrastrar', () => { wholeNext = id }); it('Cortar', 'C · Ctrl+arrastrar', act('cut')); it('Cortar y completar', '', act('cutc')) }
     if (d.kind === 'deck') it('Abanico: abrir / juntar', 'G', act('fan'))
     it(d.locked ? 'Desbloquear' : 'Bloquear', 'L', act('lock'))
     if (v.mesh.userData.ribbon) it('Borrar lo dibujado', 'X', act('erase'))
@@ -1471,18 +1491,31 @@ function setWalk(on) { // levantarse de la mesa o volver a sentarse
 }
 cvs.addEventListener('contextmenu', e => e.preventDefault())
 cvs.addEventListener('pointermove', onMove)
+function armLongPress() { // mantener el dedo quieto medio segundo abre el menú del objeto (o de la mesa)
+  clearTimeout(lpT); lpT = setTimeout(() => { if (!pending) return; const p = pending; pending = null; openMenu(p.x, p.y, p.table ? null : p.id) }, 480)
+}
+cvs.addEventListener('pointerdown', e => { // fase de captura: corre antes que los controles de cámara
+  if (e.pointerType !== 'touch') return
+  $('bar').classList.remove('open')
+  if (++touchN > 1) { pending = null; clearTimeout(lpT); return } // dos dedos: es la cámara, no un toque
+  onMove(e); controls.enableRotate = !(hover != null || (pen && overTable)) // arrastrar una pieza no gira la cámara
+}, true)
+const touchUp = e => { if (e.pointerType === 'touch') { touchN = Math.max(0, touchN - 1); if (!touchN) controls.enableRotate = true } }
+addEventListener('pointerup', touchUp); addEventListener('pointercancel', touchUp)
 cvs.addEventListener('pointerdown', e => {
   if (e.button === 2) { rDown = { x: e.clientX, y: e.clientY }; return }
   if (e.button !== 0) return
   onMove(e) // puede llegar un clic sin movimiento previo
   if (pen && !walk && (hover != null || overTable)) { drawing = hover ?? 'table'; lastUV = inkAt(drawing); if (lastUV) ink(lastUV, lastUV); return }
-  if (hover == null) { if (hoverGame) toggleGame(hoverGame); else if (overTable) pending = { table: true, x: e.clientX, y: e.clientY, point: tablePoint() }; return }
-  pending = { id: hover, x: e.clientX, y: e.clientY, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey }
+  if (hover == null) { if (hoverGame) toggleGame(hoverGame); else if (overTable) { pending = { table: true, x: e.clientX, y: e.clientY, point: tablePoint() }; if (e.pointerType === 'touch') armLongPress() } return }
+  pending = { id: hover, x: e.clientX, y: e.clientY, shift: e.shiftKey || wholeNext === hover, alt: e.altKey, ctrl: e.ctrlKey }; wholeNext = null
+  if (e.pointerType === 'touch') armLongPress()
 })
 function drop(free) { drawing = null; if (holding) { send({ t: 'ptr', p: [...myPtr] }); holding = false; prec = null; lift = 0; controls.enableZoom = true; cvs.style.cursor = ''; send({ t: 'drop', free: !!free }) } }
 addEventListener('pointerup', e => {
   if (e.button === 2) { if (rDown && Math.hypot(e.clientX - rDown.x, e.clientY - rDown.y) < 5) rightClick(e); rDown = null; return } // arrastrar con el derecho gira la cámara
   if (e.button !== 0) return
+  clearTimeout(lpT)
   if (pending) { const p = pending; pending = null; return clicked(p.table ? 'table' : p.id, p.point) }
   drop(e.shiftKey) // Shift al soltar: sin encastrar en el tablero
 })
@@ -1518,6 +1551,9 @@ $('bFig').onclick = () => $('figFile').click()
 for (const [k, n] of Object.entries(GAMES)) $('games').add(new Option(n, k))
 $('games').onchange = e => { if (e.target.value) toggleGame(e.target.value); e.target.value = '' }
 $('bClear').onclick = e => { e.target.blur(); if (confirm('¿Vaciar la mesa? Se sacan todos los objetos y los dibujos de la mesa.')) send({ t: 'clear' }) }
+$('bMenu').onclick = () => { const open = $('bar').classList.toggle('open'); $('bMenu').setAttribute('aria-expanded', open) }
+$('bar').addEventListener('click', e => { if (e.target.tagName === 'BUTTON' && innerWidth <= 760) { $('bar').classList.remove('open'); $('bMenu').setAttribute('aria-expanded', false) } }) // elegido algo, se cierra
+$('bar').addEventListener('change', () => { if (innerWidth <= 760) { $('bar').classList.remove('open'); $('bMenu').setAttribute('aria-expanded', false) } })
 $('bSnd').onclick = e => { sndOn = !sndOn; e.target.setAttribute('aria-pressed', sndOn); try { localStorage.mesaSonido = sndOn ? 'si' : 'no' } catch {} e.target.blur() }
 $('bSnd').setAttribute('aria-pressed', sndOn)
 $('bWalk').onclick = e => { setWalk(!walk); e.target.blur() } // sin foco: que la barra espaciadora no lo vuelva a apretar
@@ -1566,6 +1602,11 @@ async function start(host) {
   localStorage.mesaNombre = name
   localStream = await getMedia(name)
   $('lobby').remove(); for (const id of ['bar', 'help', 'me']) $(id).hidden = false
+  document.body.classList.add('playing')
+  if (coarse) { // en pantalla táctil: gestos en vez de teclas; de pie con WASD no se puede
+    $('help').innerHTML = '<b>Tocá</b> tirar o robar · <b>Arrastrá</b> mover · <b>Dos toques</b> voltear · <b>Mantené apretado</b> opciones · <b>Dos dedos</b> zoom y cámara'
+    setTimeout(() => $('help').classList.add('gone'), 12000); $('bWalk').hidden = true
+  }
   $('me').srcObject = localStream; $('me').play().catch(() => {})
   history.replaceState(null, '', '#' + code); $('room').textContent = 'Mesa ' + code
   const onPeerError = e => status(e.type === 'unavailable-id' ? 'Ese código de mesa ya está en uso: recargá y creá otra' : e.type === 'peer-unavailable' ? 'No encuentro esa mesa (¿código correcto? ¿el anfitrión sigue ahí?)' : 'Sin conexión al servidor de emparejamiento (' + e.type + ')')
