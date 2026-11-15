@@ -58,8 +58,9 @@
 <body>
 <div id="bar" hidden>
   <select id="things" aria-label="Agregar un objeto suelto">
-    <option value="">Cositas…</option><option value="std">Mazo de póker</option><option value="die">Dado</option><option value="rpg">Dados de rol (d4 a d20)</option><option value="pawn">Peón</option><option value="coin">Moneda</option>
-    <option value="ball">Pelota</option><option value="marbles">Canicas ×10</option><option value="tower">Torre de bloques</option><option value="paper">Papel</option><option value="gun">Pistola de confeti</option>
+    <option value="">Cositas…</option><option value="std">Mazo de póker</option><option value="pawn">Peón</option><option value="coin">Moneda</option>
+    <optgroup label="Dados"><option value="die:4">d4</option><option value="die">d6</option><option value="die:8">d8</option><option value="die:10">d10</option><option value="die:12">d12</option><option value="die:20">d20</option><option value="d100">d100 (decenas + unidades)</option><option value="rpg">Juego completo (d4 a d100)</option></optgroup>
+    <optgroup label="Otras cosas"><option value="ball">Pelota</option><option value="marbles">Canicas ×10</option><option value="tower">Torre de bloques</option><option value="paper">Papel</option><option value="gun">Pistola de confeti</option></optgroup>
   </select>
   <button id="bCards">Subir cartas…</button>
   <button id="bFig">Figura con imagen…</button>
@@ -334,7 +335,7 @@ const HORSE = [[-.13, .3], [.15, .3], [.08, .48], [.06, .58], [.22, .56], [.25, 
 function build(d) {
   let m
   if (d.kind === 'deck') m = new THREE.Mesh(new THREE.BoxGeometry(cardDims(d.ar ?? STD_AR)[0], thick(d.n), cardDims(d.ar ?? STD_AR)[1]), [edge, edge, matFor(d.face), matFor(d.back), edge, edge])
-  else if (d.kind === 'die' && d.sides) { const M = dieModel(d.sides); m = new THREE.Mesh(M.geo, M.mats) }
+  else if (d.kind === 'die' && d.sides) { const M = dieModel(d.sides, d.pct); m = new THREE.Mesh(M.geo, M.mats) }
   else if (d.kind === 'die') m = new THREE.Mesh(new THREE.BoxGeometry(.6, .6, .6), [3, 4, 1, 6, 2, 5].map(n => matFor('die:' + n)))
   else if (d.kind === 'pawn') {
     const mat = new THREE.MeshStandardMaterial({ color: d.color, roughness: .4 }); m = new THREE.Group()
@@ -412,20 +413,22 @@ function d10Tris() { // trapezoedro pentagonal: dos anillos de 5 vértices desfa
   for (let k = 0; k < 5; k++) { const U0 = ring(k, e), U1 = ring(k + 1, e), L0 = ring(k + .5, -e), L1 = ring(k + 1.5, -e); out.push(...T, ...U0, ...L0, ...T, ...L0, ...U1, ...B, ...L0, ...U1, ...B, ...U1, ...L1) }
   return out
 }
-function dieFaceTex(sides, f, val, verts) {
+function dieFaceTex(sides, f, val, verts, col) {
   const P = () => new THREE.Vector3(), t = new THREE.CanvasTexture(cv(128, 128, g => {
-    g.fillStyle = DIE_COL[sides]; g.fillRect(0, 0, 128, 128); g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'
+    g.fillStyle = col; g.fillRect(0, 0, 128, 128); g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'
     const px = ([u, v]) => [u * 128, (1 - v) * 128]
     if (sides === 4) for (const q of f.pts) { // en el d4 vale la punta de arriba: cada cara muestra el número de sus tres puntas, mirando hacia ellas
       const [x, y] = px(f.uvOf(P().lerpVectors(f.c, q, .6))); g.save(); g.translate(x, y); g.rotate(Math.atan2(x - 64, 64 - y)); g.font = 'bold 30px Georgia,serif'
       g.fillText(verts.findIndex(r => r.distanceToSquared(q) < 1e-6) + 1, 0, 0); g.restore()
     }
-    else { g.font = `bold ${sides === 12 ? 46 : 34}px Georgia,serif`; g.fillText(val, 64, 66); if (val === 6 || val === 9) g.fillRect(55, sides === 12 ? 90 : 84, 18, 3) } // 6 y 9 subrayados
+    else { g.font = `bold ${sides === 12 ? 46 : 34}px Georgia,serif`; g.fillText(val, 64, 66); if (val == 6 || val == 9) g.fillRect(55, sides === 12 ? 90 : 84, 18, 3) } // 6 y 9 subrayados
   }))
   t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t
 }
-function dieModel(sides) {
-  if (dieCache[sides]) return dieCache[sides]
+const PCT = { t: { col: '#24324f', lab: i => String(i * 10).padStart(2, '0'), val: i => i * 10 }, u: { col: '#b8323a', lab: i => String(i), val: i => i } } // dados del d100
+function dieModel(sides, pct) {
+  const key = sides + (pct || '')
+  if (dieCache[key]) return dieCache[key]
   const src = { 4: () => new THREE.TetrahedronGeometry(1), 8: () => new THREE.OctahedronGeometry(1), 12: () => new THREE.DodecahedronGeometry(1), 20: () => new THREE.IcosahedronGeometry(1) }[sides]
   const pos = src ? src().attributes.position.array : d10Tris(), faces = [], P = () => new THREE.Vector3()
   for (let i = 0; i < pos.length; i += 9) { // agrupar triángulos por normal: cada grupo es una cara del dado
@@ -447,8 +450,8 @@ function dieModel(sides) {
     f.poly = f.pts.slice().sort((q, r) => ang(q) - ang(r)).map(vi) // contorno antihorario visto desde afuera, como lo pide cannon
   }
   geo.setAttribute('position', new THREE.Float32BufferAttribute(POS, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(UV, 2)); geo.computeVertexNormals()
-  const vals = faces.map((_, i) => i + 1)
-  return dieCache[sides] = { geo, faces, verts, vals, R, mats: faces.map((f, i) => new THREE.MeshStandardMaterial({ roughness: .35, map: dieFaceTex(sides, f, vals[i], verts) })) }
+  const P2 = PCT[pct], vals = faces.map((_, i) => P2 ? P2.val(i) : i + 1)
+  return dieCache[key] = { geo, faces, verts, vals, R, mats: faces.map((f, i) => new THREE.MeshStandardMaterial({ roughness: .35, map: dieFaceTex(sides, f, P2 ? P2.lab(i) : vals[i], verts, P2 ? P2.col : DIE_COL[sides]) })) }
 }
 const dieShape = sides => { const M = dieModel(sides); return new CANNON.ConvexPolyhedron({ vertices: M.verts.map(q => new CANNON.Vec3(q.x * M.R, q.y * M.R, q.z * M.R)), faces: M.faces.map(f => f.poly) }) }
 console.assert([4, 8, 10, 12, 20].every(n => dieModel(n).faces.length === n), 'caras de los dados de rol')
@@ -817,7 +820,7 @@ const QV = new CANNON.Quaternion().setFromAxisAngle(AX, Math.PI / 2), walks = ne
 const half = o => o.kind === 'deck' ? (([w, l]) => [w / 2, thick(o.cards.length) / 2, l / 2])(cardDims(o.cards.at(-1)[2] ?? STD_AR)) : o.kind === 'token' ? [.25, (PIECE_H[o.tex[7]] || .75) / 2, .25] : o.kind === 'board' ? [o.w / 2, .06, o.l / 2] : o.kind === 'disc' ? [o.r, o.h / 2, o.r] : o.kind === 'die' && o.sides ? [DIE_R[o.sides], DIE_R[o.sides], DIE_R[o.sides]] : o.kind === 'block' ? [.25, o.th || .15, .75] : o.kind === 'ball' ? [o.r, o.r, o.r] : o.kind === 'pawn' ? [.3, .6, .3].map(n => n * (o.s || 1)) : o.kind === 'tile' ? tileSize(o.face).map(n => n / 2) : HALF[o.kind]
 const flips = o => o.kind === 'deck' || o.kind === 'tile' || !!o.color2 || !!o.coin
 const GRID = { chess: [.75, 8], damas: [.75, 8], reversi: [.75, 8], go: [.5, 13] } // encastre: paso y cantidad de casillas por lado
-const desc = o => ({ ar: o.cards?.at(-1)[2] ?? null, id: o.id, kind: o.kind, set: o.set ?? null, n: o.cards?.length ?? 0, face: o.cards ? o.cards.at(-1)[0] : o.face ?? null, back: o.cards ? o.cards[0][1] : o.back ?? null, color: o.color ?? null, tex: o.tex ?? null, strokes: o.strokes ?? null, r: o.r ?? null, h: o.h ?? null, sides: o.sides ?? null, th: o.th ?? null, w: o.w ?? null, l: o.l ?? null, locked: !!o.locked, c2: o.color2 ?? null, s: o.s ?? null })
+const desc = o => ({ ar: o.cards?.at(-1)[2] ?? null, id: o.id, kind: o.kind, set: o.set ?? null, n: o.cards?.length ?? 0, face: o.cards ? o.cards.at(-1)[0] : o.face ?? null, back: o.cards ? o.cards[0][1] : o.back ?? null, color: o.color ?? null, tex: o.tex ?? null, strokes: o.strokes ?? null, r: o.r ?? null, h: o.h ?? null, sides: o.sides ?? null, pct: o.pct ?? null, th: o.th ?? null, w: o.w ?? null, l: o.l ?? null, locked: !!o.locked, c2: o.color2 ?? null, s: o.s ?? null })
 const faceUp = o => o.body.quaternion.vmult(AY).y > 0
 function makeBody(o, pos, quat) {
   if (o.body) world.removeBody(o.body)
@@ -849,7 +852,7 @@ function localUp(o) { o.body.quaternion.conjugate(qc); return qc.vmult(AY, upL) 
 function dieValue(o) {
   const u = localUp(o)
   if (!o.sides) { const a = [u.x, -u.x, u.y, -u.y, u.z, -u.z]; return [3, 4, 1, 6, 2, 5][a.indexOf(Math.max(...a))] } // mismo orden que las caras del cubo
-  const M = dieModel(o.sides), best = (list, f) => list.reduce((b, q, i) => (f(q) > f(list[b]) ? i : b), 0)
+  const M = dieModel(o.sides, o.pct), best = (list, f) => list.reduce((b, q, i) => (f(q) > f(list[b]) ? i : b), 0)
   return o.sides === 4 ? best(M.verts, q => q.x * u.x + q.y * u.y + q.z * u.z) + 1 : M.vals[best(M.faces, f => f.n.x * u.x + f.n.y * u.y + f.n.z * u.z)]
 }
 const coinFace = c => localUp(c).y > 0 ? 'cara' : 'ceca'
@@ -862,8 +865,14 @@ function settleRolls() {
     rolls.delete(pid)
     const dice = ds.filter(d => d.kind === 'die' && !d.inCup), coins = ds.filter(d => d.coin), parts = []
     if (dice.length) {
-      const vals = dice.map(d => [d.sides || 6, dieValue(d)]), same = vals.every(v => v[0] === vals[0][0]), sum = vals.reduce((t, v) => t + v[1], 0)
-      parts.push(same ? `sacó ${vals.map(v => v[1]).join(' + ')}${vals.length > 1 ? ' = ' + sum : ''}${vals[0][0] !== 6 ? ` (d${vals[0][0]})` : ''}` : `sacó ${vals.map(v => `d${v[0]}: ${v[1]}`).join(' · ')} (total ${sum})`)
+      const tens = dice.filter(d => d.pct === 't'), units = dice.filter(d => d.pct === 'u'), vals = []
+      for (let i = 0; i < Math.max(tens.length, units.length); i++) { // el d100: decenas + unidades tirados juntos; 00 + 0 es 100
+        const t = tens[i], u = units[i]
+        vals.push(t && u ? ['d100', dieValue(t) + dieValue(u) || 100] : u ? ['d10', dieValue(u) || 10] : ['d10 decenas', dieValue(t)])
+      }
+      for (const d of dice) if (!d.pct) vals.push(['d' + (d.sides || 6), dieValue(d)])
+      const same = vals.every(v => v[0] === vals[0][0]), sum = vals.reduce((t, v) => t + v[1], 0)
+      parts.push(same ? `sacó ${vals.map(v => v[1]).join(' + ')}${vals.length > 1 ? ' = ' + sum : ''}${vals[0][0] !== 'd6' ? ` (${vals[0][0]})` : ''}` : `sacó ${vals.map(v => `${v[0]}: ${v[1]}`).join(' · ')} (total ${sum})`)
     }
     if (coins.length) parts.push(`tiró la moneda: ${coins.map(coinFace).join(', ')}`)
     log(pid, parts.join(' y '))
@@ -1129,7 +1138,10 @@ function handle(m, pid) { // m viene de la red: validar todo
     const { a, x, z } = seatDir(pl.seat); let o
     if (Object.hasOwn(GAMES, m.kind)) { if (![...objs.values()].some(o => o.set === m.kind)) { spawnSet(m.kind, x, z, a); log(pid, 'sacó ' + GAMES[m.kind]) } return }
     const col = /^#[0-9a-f]{6}$/i.test(m.color) ? m.color : '#cccccc', at = (dx, y, dz) => [x * 4.4 + dx, y, z * 4.4 + dz]
-    if (m.kind === 'rpg') { [4, 6, 8, 10, 12, 20].forEach((n, i) => { const u = (i - 2.5) * .95; const d = add({ kind: 'die', ...(n !== 6 && { sides: n }) }, [x * 4.4 + z * u, 1 + i * .1, z * 4.4 - x * u]); d.body.quaternion.setFromEuler(rnd(6), rnd(6), rnd(6)); d.body.angularVelocity.set(rnd(10), rnd(10), rnd(10)) }); return } // girados: derechos quedan parados sobre una punta
+    const roll = (list, gap) => list.forEach(([n, pct], i) => { const u = (i - (list.length - 1) / 2) * gap; const d = add({ kind: 'die', ...(n !== 6 && { sides: n }), ...(pct && { pct }) }, [x * 4.4 + z * u, 1 + i * .1, z * 4.4 - x * u]); d.body.quaternion.setFromEuler(rnd(6), rnd(6), rnd(6)); d.body.angularVelocity.set(rnd(10), rnd(10), rnd(10)) }) // girados: derechos quedan parados sobre una punta
+    if (m.kind === 'd100') return roll([[10, 't'], [10, 'u']], .9)
+    if (m.kind === 'die' && [4, 8, 10, 12, 20].includes(m.sides)) return roll([[m.sides]], 0)
+    if (m.kind === 'rpg') return roll([[4], [6], [8], [10], [12], [20], [10, 't'], [10, 'u']], .85)
     if (m.kind === 'marbles') { for (let i = 0; i < 10; i++) add({ kind: 'ball', r: .14, color: COLORS[i % 8] }, at(rnd(1.5), .5 + i * .1, rnd(1.5))); return }
     if (m.kind === 'tower') return spawnTower(x, z, a)
     if (m.kind === 'gun') { o = { kind: 'gun' }; add(o, [x * 4.4, .6, z * 4.4]); o.yaw = a + Math.PI / 2; o.flip = false; setOrient(o); return } // apuntando al centro
@@ -1501,7 +1513,7 @@ const setName = k => GAMES[k] || 'Torre de bloques'
 const fillReset = () => { const sel = $('reset'); sel.length = 1; for (const k of new Set([...view.values()].map(v => v.d.set).filter(Boolean))) sel.add(new Option(setName(k), k)); if (sel.length === 1) sel.add(new Option('(no hay juegos en la mesa)', '')) }
 $('reset').onpointerdown = $('reset').onfocus = $('reset').onkeydown = fillReset
 $('reset').onchange = e => { const k = e.target.value; e.target.value = ''; if (k && confirm(`¿Reiniciar ${setName(k)}? Vuelve todo a su armado inicial.`)) send({ t: 'reset', set: k }) }
-$('things').onchange = e => { if (e.target.value) send({ t: 'spawn', kind: e.target.value, color: $('color').value }); e.target.value = '' }
+$('things').onchange = e => { const [kind, sides] = e.target.value.split(':'); if (kind) send({ t: 'spawn', kind, sides: +sides || null, color: $('color').value }); e.target.value = '' } // 'die:8' = un d8
 $('bFig').onclick = () => $('figFile').click()
 for (const [k, n] of Object.entries(GAMES)) $('games').add(new Option(n, k))
 $('games').onchange = e => { if (e.target.value) toggleGame(e.target.value); e.target.value = '' }
