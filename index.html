@@ -1,0 +1,1655 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mesa Libre</title>
+<style>
+  :root { --bg:#0d0f14; --panel:#191c24ee; --line:#343947; --ink:#ece8df; --dim:#9a9fae; --acc:#f2b84b; }
+  html,body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui,sans-serif; }
+  canvas { display:block; }
+  button,input,select { font:inherit; color:var(--ink); background:#242833; border:1px solid var(--line); border-radius:8px; padding:7px 11px; }
+  button { cursor:pointer; }
+  button:hover { border-color:var(--acc); }
+  #bCam[aria-pressed=false],#bMic[aria-pressed=false],#bSnd[aria-pressed=false] { opacity:.45; text-decoration:line-through; }
+  #bPen[aria-pressed=true] { background:var(--acc); color:#15171c; border-color:var(--acc); }
+  :focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
+  input[type=color] { padding:2px; width:38px; height:35px; }
+  #bar { position:fixed; top:10px; left:10px; right:190px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  #room { margin-left:8px; color:var(--dim); }
+  #me { position:fixed; top:10px; right:10px; width:160px; height:120px; object-fit:cover; border-radius:10px; border:1px solid var(--line); background:#000; transform:scaleX(-1); }
+  #help,#tip,#status { position:fixed; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:5px 12px; width:max-content; max-width:calc(100vw - 44px); text-align:center; }
+  #help { bottom:10px; color:var(--dim); }
+  #help b { color:var(--ink); }
+  #tip { bottom:52px; color:var(--acc); }
+  #status { top:60px; }
+  #tip:empty,#status:empty { display:none; }
+  #log { position:fixed; left:10px; top:108px; margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:4px; max-width:min(420px, calc(100vw - 200px)); pointer-events:none; }
+  #log li { background:var(--panel); border:1px solid var(--line); border-left:4px solid var(--c); border-radius:8px; padding:4px 10px; transition:opacity 1.5s; }
+  #log li.old { opacity:.35; }
+  body { user-select:none; -webkit-user-select:none; } /* arrastrar o hacer doble clic no selecciona texto */
+  input, textarea { user-select:text; -webkit-user-select:text; }
+  #bBack { position:fixed; left:50%; top:60px; transform:translateX(-50%); background:var(--acc); color:#15171c; border-color:var(--acc); font-weight:600; }
+  #menu { position:fixed; z-index:5; min-width:230px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:5px; box-shadow:0 10px 28px #000a; }
+  #menu button { display:flex; justify-content:space-between; gap:18px; width:100%; border:0; background:transparent; text-align:left; padding:7px 10px; border-radius:6px; }
+  #menu button:hover, #menu button:focus-visible { background:#2c3140; outline:none; }
+  #menu kbd { color:var(--dim); font:inherit; font-size:12px; white-space:nowrap; }
+  #lobby { position:fixed; inset:0; display:grid; place-items:center; background:radial-gradient(circle at 50% 40%,#1c2a26,#0d0f14 70%); }
+  #lobby form, dialog { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:26px 30px; width:min(340px,86vw); color:var(--ink); }
+  #lobby h1 { margin:0; font:700 34px Georgia,serif; color:var(--acc); }
+  #lobby p { color:var(--dim); margin:6px 0 18px; }
+  label { display:block; margin:12px 0 6px; }
+  label input:not([type=color]) { display:block; width:100%; box-sizing:border-box; margin-top:4px; }
+  #lobby button { width:100%; margin-top:8px; }
+  .or { text-align:center; color:var(--dim); margin:12px 0 0; }
+  dialog::backdrop { background:#000a; }
+  dialog small { color:var(--dim); display:block; margin-top:4px; }
+  dialog menu { display:flex; gap:8px; justify-content:flex-end; padding:0; margin:18px 0 0; }
+</style>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+  "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"
+} }
+</script>
+</head>
+<body>
+<div id="bar" hidden>
+  <select id="things" aria-label="Agregar un objeto suelto">
+    <option value="">Cositas…</option><option value="std">Mazo de póker</option><option value="die">Dado</option><option value="rpg">Dados de rol (d4 a d20)</option><option value="pawn">Peón</option><option value="coin">Moneda</option>
+    <option value="ball">Pelota</option><option value="marbles">Canicas ×10</option><option value="tower">Torre de bloques</option><option value="paper">Papel</option><option value="gun">Pistola de confeti</option>
+  </select>
+  <button id="bCards">Subir cartas…</button>
+  <button id="bFig">Figura con imagen…</button>
+  <button id="bBoard">Subir tablero…</button>
+  <select id="reset" aria-label="Reiniciar un juego a su armado inicial"><option value="">Reiniciar…</option></select>
+  <select id="games" aria-label="Traer o guardar un juego"><option value="">Juegos…</option></select>
+  <button id="bPen" aria-pressed="false">Fibrón</button>
+  <input id="color" type="color" value="#e5484d" aria-label="Color del peón y del fibrón">
+  <button id="bClear">Vaciar mesa</button>
+  <button id="bSave" hidden>Guardar mesa</button>
+  <button id="bLoad" hidden>Cargar mesa…</button>
+  <input id="loadFile" type="file" accept=".json,application/json" hidden>
+  <button id="bSnd" aria-pressed="true">Sonido</button>
+  <button id="bWalk">Levantarse</button>
+  <button id="bCam" aria-pressed="true">Cámara</button>
+  <button id="bMic" aria-pressed="true">Micrófono</button>
+  <span id="room"></span><button id="bLink">Copiar enlace</button>
+  <input id="figFile" type="file" accept="image/*" hidden>
+  <input id="boardFile" type="file" accept="image/*" hidden>
+</div>
+<video id="me" muted playsinline hidden></video>
+<div id="status" role="status"></div>
+<button id="bBack" hidden>Volver a la mesa</button>
+<div id="menu" role="menu" aria-label="Opciones del objeto" hidden></div>
+<div id="tip"></div>
+<ol id="log" aria-live="polite" aria-label="Registro de jugadas"></ol>
+<div id="help" hidden><b>Arrastrar</b> mover (Shift: mazo entero · Ctrl: cortar · Alt: precisión) · <b>Clic</b> tirar dado/moneda, robar carta · <b>Doble clic</b> voltear · <b>P</b> señalar · <b>Z</b> o doble clic en un papel: acercar para escribir · <b>Rueda</b> sosteniendo: girar (Shift: subir/bajar) · <b>Shift al soltar</b> sin encastrar · <b>Clic derecho</b> opciones (arrastrando: cámara) · <b>Botón del medio</b> desplazar · <b>Rueda</b> zoom · <b>Levantarse</b> y caminar con WASD</div>
+
+<dialog id="dlg">
+  <form id="dlgForm" method="dialog">
+    <strong>Subir cartas</strong>
+    <label>Caras (una imagen por carta) <input id="faces" type="file" accept="image/*" multiple required></label>
+    <label>Dorsos (opcional) <input id="backs" type="file" accept="image/*" multiple></label>
+    <small>1 dorso = el mismo para todas · tantos dorsos como cartas = uno por carta · otra cantidad = grupos parejos, en orden de nombre de archivo.</small>
+    <menu><button type="button" id="dlgCancel">Cancelar</button><button id="dlgOk" value="ok">Crear mazo</button></menu>
+  </form>
+</dialog>
+
+<div id="lobby"><form onsubmit="return false">
+  <h1>Mesa Libre</h1>
+  <p>Una mesa, cartas, dados y fichas. Las reglas las ponen ustedes.</p>
+  <label>Tu nombre <input id="name" maxlength="20" autocomplete="nickname"></label>
+  <button type="button" id="create">Crear mesa</button>
+  <button type="button" id="resume" hidden>Retomar la última mesa</button>
+  <div class="or">o</div>
+  <label>Código de mesa <input id="code" maxlength="12" autocapitalize="off"></label>
+  <button type="button" id="join">Unirse</button>
+</form></div>
+
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import * as CANNON from 'cannon-es'
+
+const $ = id => document.getElementById(id)
+const R = 8, EDGE = R - .3, HOLD = 1.6
+const SEATS = [0, 4, 2, 6, 1, 5, 3, 7]
+const COLORS = ['#e5484d', '#3e8ed0', '#46a758', '#f5a524', '#8e4ec6', '#12a594', '#e93d82', '#a18072']
+const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
+const GAMES = { chess: 'Ajedrez', damas: 'Damas', c4: '4 en línea', mahjong: 'Mahjong', esp: 'Baraja española', poker: 'Póker', domino: 'Dominó', dados: 'Generala', backgammon: 'Backgammon', truco: 'Truco', go: 'Go', reversi: 'Reversi', ludo: 'Ludo', oca: 'La Oca', mancala: 'Mancala', mikado: 'Palitos chinos', tarot: 'Tarot', bowling: 'Bowling', tower: 'Torre de bloques' }
+const ARCANA = ['El Loco', 'El Mago', 'La Sacerdotisa', 'La Emperatriz', 'El Emperador', 'El Sumo Sacerdote', 'Los Enamorados', 'El Carro', 'La Fuerza', 'El Ermitaño', 'La Rueda', 'La Justicia', 'El Colgado', 'La Muerte', 'La Templanza', 'El Diablo', 'La Torre', 'La Estrella', 'La Luna', 'El Sol', 'El Juicio', 'El Mundo']
+const ROMAN = ['0', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX', 'XXI']
+const BG_PW = 3.7 / 6, bgX = k => k < 6 ? 4 - BG_PW * (k + .5) : -.3 - BG_PW * (k - 5.5) // backgammon: x de la punta k (0 = derecha de quien juega)
+// casillas de la oca: espiral hacia adentro desde abajo a la izquierda
+function spiral(cols, rows) {
+  const out = []; let x0 = 0, y0 = 0, x1 = cols - 1, y1 = rows - 1
+  while (x0 <= x1 && y0 <= y1) {
+    for (let x = x0; x <= x1; x++) out.push([x, y1]); for (let y = y1 - 1; y >= y0; y--) out.push([x1, y])
+    if (y0 < y1) for (let x = x1 - 1; x >= x0; x--) out.push([x, y0]); if (x0 < x1) for (let y = y0 + 1; y < y1; y++) out.push([x0, y])
+    x0++; x1--; y0++; y1--
+  }
+  return out
+}
+console.assert(spiral(9, 8).length === 72 && new Set(spiral(9, 8).map(String)).size === 72, 'espiral')
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0;[a[i], a[j]] = [a[j], a[i]] } return a }
+// mahjong: m/p/s 1-9 (caracteres, círculos, bambúes), w0-3 vientos, d0-2 dragones, f0-7 flores y estaciones
+const mahjongSet = () => [...['m', 'p', 's'].flatMap(k => Array.from({ length: 9 }, (_, i) => k + (i + 1))), 'w0', 'w1', 'w2', 'w3', 'd0', 'd1', 'd2'].flatMap(c => Array(4).fill('mj:' + c)).concat(Array.from({ length: 8 }, (_, i) => 'mj:f' + i))
+const dominoSet = () => { const s = []; for (let a = 0; a < 7; a++) for (let b = a; b < 7; b++) s.push(`dom:${a}-${b}`); return s }
+const tileSize = face => face.startsWith('dom:') ? [.5, .15, 1] : [.5, .34, .68]
+const seatDir = s => { const a = s * Math.PI / 4; return { a, x: Math.sin(a), z: Math.cos(a) } }
+const rnd = k => (Math.random() - .5) * k
+const clamp = (v, m) => Math.max(-m, Math.min(m, v))
+const thick = n => Math.max(.02, .006 * n)
+
+// ---------- lógica pura ----------
+// Qué dorso le toca a la carta i: 1 dorso = todas, B==N = uno por carta, otro = grupos parejos.
+const STD_AR = 1 / 1.4, cardDims = ar => ar >= 1 ? [1.4, 1.4 / ar] : [1.4 * ar, 1.4] // [ancho, largo]: el lado mayor mide 1,4
+const backIndex = (i, n, b) => Math.floor(i * b / n)
+// Un mazo es una lista fondo→tope en su eje local +Y; boca abajo, el tope del mundo es cards[0].
+function mergeCards(dst, dstUp, src, srcUp) {
+  const w = srcUp ? src : [...src].reverse() // src de abajo hacia arriba en el mundo
+  return dstUp ? [...dst, ...w] : [...[...w].reverse(), ...dst]
+}
+console.assert(backIndex(0, 10, 1) === 0 && backIndex(9, 10, 10) === 9 && backIndex(5, 10, 2) === 1, 'backIndex')
+console.assert(mergeCards([1, 2], true, [3, 4], true).join() === '1,2,3,4', 'merge up/up')
+console.assert(mergeCards([1, 2], false, [3, 4], false).join() === '3,4,1,2', 'merge down/down')
+console.assert(mergeCards([1, 2], true, [3, 4], false).join() === '1,2,4,3', 'merge up/down')
+console.assert(mahjongSet().length === 144 && new Set(mahjongSet()).size === 42 && dominoSet().length === 28, 'juegos de fichas')
+
+// ---------- texturas ----------
+const texData = new Map(), texs = new Map(), mats = new Map()
+function cv(w, h, draw) { const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h); return c }
+const PIPS = [[], [4], [0, 8], [0, 4, 8], [0, 2, 6, 8], [0, 2, 4, 6, 8], [0, 2, 3, 5, 6, 8]]
+// reparte n dibujos en una grilla centrada dentro del rectángulo
+function grid(n, x0, y0, w, h, fn) {
+  const cols = n <= 3 ? 1 : n <= 6 ? 2 : 3, rows = Math.ceil(n / cols), s = Math.min(w / cols, h / rows)
+  for (let i = 0; i < n; i++) fn(x0 + w / 2 + (i % cols - (cols - 1) / 2) * w / cols, y0 + h / 2 + ((i / cols | 0) - (rows - 1) / 2) * h / rows, s)
+}
+const PALO = { // oros, copas, espadas, bastos
+  o: (g, x, y, s) => { g.fillStyle = '#e0a81c'; g.beginPath(); g.arc(x, y, s * .4, 0, 7); g.fill(); g.strokeStyle = '#8a5a00'; g.lineWidth = s * .06; g.beginPath(); g.arc(x, y, s * .26, 0, 7); g.stroke() },
+  c: (g, x, y, s) => { g.fillStyle = '#c8102e'; g.beginPath(); g.moveTo(x - s * .32, y - s * .38); g.lineTo(x + s * .32, y - s * .38); g.lineTo(x + s * .12, y + s * .08); g.lineTo(x - s * .12, y + s * .08); g.fill(); g.fillRect(x - s * .05, y + s * .05, s * .1, s * .25); g.fillRect(x - s * .22, y + s * .28, s * .44, s * .1) },
+  e: (g, x, y, s) => { g.fillStyle = '#1f4fa8'; g.fillRect(x - s * .05, y - s * .42, s * .1, s * .62); g.fillRect(x - s * .22, y + s * .14, s * .44, s * .08); g.fillRect(x - s * .04, y + s * .2, s * .08, s * .2) },
+  b: (g, x, y, s) => { g.strokeStyle = '#1f7a3d'; g.lineCap = 'round'; g.lineWidth = s * .2; g.beginPath(); g.moveTo(x - s * .12, y + s * .32); g.lineTo(x + s * .12, y - s * .32); g.stroke() },
+}
+function gen(id) {
+  if (id === 'bg:board') return cv(840, 640, g => {
+    g.fillStyle = '#3a2416'; g.fillRect(0, 0, 840, 640); g.fillStyle = '#1f5c4a'; g.fillRect(20, 20, 370, 600); g.fillRect(450, 20, 370, 600)
+    for (let k = 0; k < 12; k++) for (const top of [0, 1]) {
+      const x = (bgX(k) + 4.2) * 100; g.fillStyle = (k + top) % 2 ? '#e9d7b5' : '#8a2f3a'
+      g.beginPath(); g.moveTo(x - 29, top ? 20 : 620); g.lineTo(x + 29, top ? 20 : 620); g.lineTo(x, top ? 285 : 355); g.fill()
+    }
+  })
+  if (id === 'go:board') return cv(660, 660, g => {
+    g.fillStyle = '#d9a85a'; g.fillRect(0, 0, 660, 660); g.strokeStyle = '#3a2416'; g.lineWidth = 2
+    for (let i = 0; i < 13; i++) { g.beginPath(); g.moveTo(30 + i * 50, 30); g.lineTo(30 + i * 50, 630); g.moveTo(30, 30 + i * 50); g.lineTo(630, 30 + i * 50); g.stroke() }
+    g.fillStyle = '#3a2416'; for (const a of [3, 6, 9]) for (const b of [3, 6, 9]) { g.beginPath(); g.arc(30 + a * 50, 30 + b * 50, 5, 0, 7); g.fill() }
+  })
+  if (id === 'rev:board') return cv(640, 640, g => {
+    g.fillStyle = '#15171c'; g.fillRect(0, 0, 640, 640); g.fillStyle = '#1f7a4d'
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) g.fillRect(22 + c * 75, 22 + r * 75, 71, 71)
+  })
+  if (id === 'ludo:board') return cv(600, 600, g => {
+    const C = ['#e5484d', '#46a758', '#f5a524', '#3e8ed0'], cell = (c, r, col) => { g.fillStyle = col; g.fillRect(c * 40, r * 40, 40, 40); g.strokeRect(c * 40, r * 40, 40, 40) }
+    g.fillStyle = '#fbf7ea'; g.fillRect(0, 0, 600, 600); g.strokeStyle = '#23211f'; g.lineWidth = 2
+    for (let i = 0; i < 15; i++) for (let j = 6; j < 9; j++) { cell(i, j, '#fbf7ea'); cell(j, i, '#fbf7ea') }
+    ;[[0, 0], [9, 0], [9, 9], [0, 9]].forEach(([c, r], i) => { g.fillStyle = C[i]; g.fillRect(c * 40, r * 40, 240, 240); g.fillStyle = '#fbf7ea'; g.fillRect(c * 40 + 40, r * 40 + 40, 160, 160); g.strokeRect(c * 40, r * 40, 240, 240) })
+    for (let k = 1; k < 6; k++) { cell(k, 7, C[0]); cell(7, k, C[1]); cell(14 - k, 7, C[2]); cell(7, 14 - k, C[3]) } // pasillos de llegada
+    cell(1, 6, C[0]); cell(8, 1, C[1]); cell(13, 8, C[2]); cell(6, 13, C[3]) // salidas
+    ;[[240, 240, 240, 360], [240, 240, 360, 240], [360, 240, 360, 360], [240, 360, 360, 360]].forEach(([x1, y1, x2, y2], i) => { g.fillStyle = C[i]; g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.lineTo(300, 300); g.fill(); g.stroke() })
+  })
+  if (id === 'oca:board') return cv(720, 640, g => {
+    const OCAS = [5, 9, 14, 18, 23, 27, 32, 36, 41, 45, 50, 54, 59], ESP = { 6: 'PUENTE', 12: 'PUENTE', 19: 'POSADA', 26: 'DADOS', 31: 'POZO', 42: 'LABERINTO', 52: 'CÁRCEL', 53: 'DADOS', 58: 'MUERTE', 63: 'JARDÍN', 0: 'SALIDA' }
+    g.fillStyle = '#2f6b3c'; g.fillRect(0, 0, 720, 640); g.textAlign = 'center'; g.textBaseline = 'middle'; g.strokeStyle = '#3a2416'; g.lineWidth = 2
+    spiral(9, 8).slice(0, 64).forEach(([x, y], i) => {
+      g.fillStyle = OCAS.includes(i) ? '#f2c230' : ESP[i] ? '#e9a0a0' : i % 2 ? '#fbf7ea' : '#e9dcc0'; g.fillRect(x * 80, y * 80, 80, 80); g.strokeRect(x * 80, y * 80, 80, 80)
+      g.fillStyle = '#23211f'; g.font = 'bold 26px Georgia,serif'; g.fillText(i || '', x * 80 + 40, y * 80 + 30); g.font = 'bold 11px system-ui'; g.fillText(OCAS.includes(i) ? 'OCA' : ESP[i] || '', x * 80 + 40, y * 80 + 62)
+    })
+    g.fillStyle = '#fbf7ea'; g.font = 'bold 30px Georgia,serif'; g.fillText('La Oca', 400, 320)
+  })
+  if (id === 'man:board') return cv(800, 300, g => {
+    g.fillStyle = '#8a5a2f'; g.fillRect(0, 0, 800, 300); g.fillStyle = '#4a2f1d'
+    for (let c = 0; c < 6; c++) for (const y of [85, 215]) { g.beginPath(); g.arc(150 + c * 100, y, 43, 0, 7); g.fill() }
+    for (const x of [22, 698]) g.fillRect(x, 40, 80, 220)
+  })
+  if (id === 'sheet:generala') return cv(420, 594, g => {
+    g.fillStyle = '#fdfcf7'; g.fillRect(0, 0, 420, 594); g.fillStyle = '#23211f'; g.strokeStyle = '#23211f'; g.lineWidth = 1.5
+    g.font = 'bold 26px Georgia,serif'; g.fillText('GENERALA', 14, 36); g.font = '19px Georgia,serif'
+    ;['Jugador', '1', '2', '3', '4', '5', '6', 'Escalera', 'Full', 'Póker', 'Generala', 'Doble', 'TOTAL'].forEach((t, r) => { g.fillText(t, 14, 76 + r * 39); g.strokeRect(8, 50 + r * 39, 404, 39) })
+    for (let c = 0; c < 4; c++) g.strokeRect(124 + c * 72, 50, 72, 13 * 39)
+  })
+  if (id.startsWith('tarot:') && id !== 'tarot:back') return cv(250, 350, (g, w, h) => {
+    const i = +id.slice(6); g.fillStyle = '#1b1a3a'; g.fillRect(0, 0, w, h); g.strokeStyle = '#d9b26a'; g.lineWidth = 4; g.strokeRect(10, 10, w - 20, h - 20); g.textAlign = 'center'; g.textBaseline = 'middle'
+    if (i < 22) { g.fillStyle = '#d9b26a'; g.font = 'bold 34px Georgia,serif'; g.fillText(ROMAN[i], w / 2, 46); g.font = '130px serif'; g.fillText('☼✦☾♀♂✝♥♞♌☄☸⚖☿☠⚱♑♜★☽☀♫♁'[i] + '︎', w / 2, 178); g.fillStyle = '#f4efd8'; g.font = 'bold 24px Georgia,serif'; g.fillText(ARCANA[i], w / 2, 306, w - 36); return }
+    const m = i - 22, n = m % 14 + 1, p = PALO['bceo'[m / 14 | 0]]
+    g.fillStyle = '#f4efd8'; g.fillRect(24, 24, w - 48, h - 48)
+    if (n <= 10) grid(n, 45, 60, 160, 230, (x, y, s) => p(g, x, y, Math.min(s, 105))); else p(g, w / 2, 150, 150)
+    g.fillStyle = '#1b1a3a'; if (n > 10) { g.font = 'bold 28px Georgia,serif'; g.fillText(['SOTA', 'CABALLO', 'REINA', 'REY'][n - 11], w / 2, 285) }
+    g.font = 'bold 28px Georgia,serif'; g.fillText(n, 44, 46); g.fillText(n, w - 44, h - 44)
+  })
+  if (id === 'std:back' || id === 'esp:back' || id === 'tarot:back') return cv(250, 350, (g, w, h) => {
+    g.fillStyle = { e: '#1f3f7a', t: '#2a1b4a' }[id[0]] || '#7a1f2b'; g.fillRect(0, 0, w, h); g.strokeStyle = '#d9b26a'; g.lineWidth = 2; g.beginPath()
+    for (let i = -h; i < w; i += 18) { g.moveTo(i, 0); g.lineTo(i + h, h); g.moveTo(i + h, 0); g.lineTo(i, h) }
+    g.stroke(); g.lineWidth = 14; g.strokeStyle = '#f3ead8'; g.strokeRect(7, 7, w - 14, h - 14)
+  })
+  if (id === 'chess:board') return cv(512, 512, (g, w) => {
+    g.fillStyle = '#3a2416'; g.fillRect(0, 0, w, w); const s = (w - 32) / 8
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) { g.fillStyle = (r + c) % 2 ? '#7a5236' : '#e9d7b5'; g.fillRect(16 + c * s, 16 + r * s, s, s) }
+  })
+  if (id.startsWith('coin:')) return cv(128, 128, g => {
+    g.fillStyle = '#d9b26a'; g.fillRect(0, 0, 128, 128); g.strokeStyle = '#8a5a00'; g.lineWidth = 6; g.beginPath(); g.arc(64, 64, 54, 0, 7); g.stroke()
+    g.fillStyle = '#5a3a00'; g.font = 'bold 30px Georgia,serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(id[5] === 'c' ? 'CARA' : 'CECA', 64, 66)
+  })
+  if (id === 'mj:back') return cv(8, 8, g => { g.fillStyle = '#1f7a4d'; g.fillRect(0, 0, 8, 8) })
+  if (id === 'dom:back') return cv(8, 8, g => { g.fillStyle = '#f4f1ea'; g.fillRect(0, 0, 8, 8) })
+  if (id.startsWith('dom:')) return cv(100, 200, g => {
+    g.fillStyle = '#f4f1ea'; g.fillRect(0, 0, 100, 200); g.fillStyle = '#15171c'; g.fillRect(12, 98, 76, 4);
+    [+id[4], +id[6]].forEach((v, j) => { for (const p of PIPS[v] || []) { g.beginPath(); g.arc(25 + p % 3 * 25, j * 100 + 25 + (p / 3 | 0) * 25, 9, 0, 7); g.fill() } })
+  })
+  if (id.startsWith('mj:')) return cv(150, 204, (g, w, h) => {
+    const k = id[3], n = +id[4]; g.fillStyle = '#f7f3e6'; g.fillRect(0, 0, w, h); g.textAlign = 'center'; g.textBaseline = 'middle'
+    const ch = (t, y, px, col) => { g.fillStyle = col; g.font = `bold ${px}px serif`; g.fillText(t, w / 2, y) }
+    if (k === 'm') { ch('一二三四五六七八九'[n - 1], 62, 64, '#15171c'); ch('萬', 142, 72, '#c8102e') }
+    else if (k === 'p') grid(n, 14, 24, 122, 160, (x, y, s) => { const r = Math.min(s, 76) * .4; g.fillStyle = '#1f4fa8'; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill(); g.fillStyle = '#c8102e'; g.beginPath(); g.arc(x, y, r * .4, 0, 7); g.fill() })
+    else if (k === 's') grid(n, 14, 24, 122, 160, (x, y, s) => { s = Math.min(s, 80); g.fillStyle = '#1f7a3d'; g.fillRect(x - s * .1, y - s * .4, s * .2, s * .8) })
+    else if (k === 'w') ch('東南西北'[n], h / 2, 100, '#15171c')
+    else if (k === 'd' && n < 2) ch('中發'[n], h / 2, 100, n ? '#1f7a3d' : '#c8102e')
+    else if (k === 'd') { g.strokeStyle = '#1f4fa8'; g.lineWidth = 8; g.strokeRect(28, 34, w - 56, h - 68) }
+    else { ch('梅蘭菊竹春夏秋冬'[n], 112, 84, n < 4 ? '#c8102e' : '#1f7a3d'); ch(n % 4 + 1, 22, 24, '#666') }
+    if ('mps'.includes(k)) { g.textAlign = 'left'; g.fillStyle = '#666'; g.font = 'bold 20px system-ui'; g.fillText(n, 6, 14) }
+  })
+  if (id.startsWith('esp:')) return cv(250, 350, (g, w, h) => {
+    const n = parseInt(id.slice(4)), p = PALO[id.at(-1)] || PALO.o
+    g.fillStyle = '#fbf7ea'; g.fillRect(0, 0, w, h); g.strokeStyle = '#23211f'; g.lineWidth = 3; g.strokeRect(14, 14, w - 28, h - 28)
+    if (n < 10) grid(n, 45, 60, 160, 230, (x, y, s) => p(g, x, y, Math.min(s, 110)))
+    else p(g, w / 2, 150, 150)
+    g.fillStyle = '#23211f'; g.textAlign = 'center'; g.textBaseline = 'middle'
+    if (n > 9) { g.font = 'bold 30px Georgia,serif'; g.fillText({ 10: 'SOTA', 11: 'CABALLO', 12: 'REY' }[n], w / 2, 285) }
+    g.font = 'bold 32px Georgia,serif'; g.fillText(n, 38, 40); g.fillText(n, w - 38, h - 38)
+  })
+  if (id.startsWith('std:')) return cv(250, 350, (g, w, h) => {
+    const s = id.at(-1), r = id.slice(4, -1)
+    g.fillStyle = '#fbfaf6'; g.fillRect(0, 0, w, h); g.fillStyle = '♥♦'.includes(s) ? '#c8102e' : '#15171c'
+    g.textAlign = 'center'; g.textBaseline = 'middle'
+    const corner = () => { g.font = 'bold 44px Georgia,serif'; g.fillText(r, 36, 40); g.font = '40px serif'; g.fillText(s, 36, 84) }
+    corner(); g.font = '150px serif'; g.fillText(s, w / 2, h / 2 + 8); g.translate(w, h); g.rotate(Math.PI); corner()
+  })
+  if (id.startsWith('die:')) return cv(128, 128, (g, w) => {
+    g.fillStyle = '#f4f1ea'; g.fillRect(0, 0, w, w); g.fillStyle = '#15171c'
+    for (const p of PIPS[id[4]] || []) { g.beginPath(); g.arc(32 + p % 3 * 32, 32 + (p / 3 | 0) * 32, 11, 0, 7); g.fill() }
+  })
+  return cv(8, 8, g => { g.fillStyle = '#777'; g.fillRect(0, 0, 8, 8) }) // todavía no llegó la imagen
+}
+function loadTex(t, d) { const i = new Image(); i.onload = () => { t.dispose(); t.image = i; t.needsUpdate = true }; i.src = d }
+function getTex(id) {
+  let t = texs.get(id)
+  if (!t) { t = new THREE.CanvasTexture(gen(id)); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; texs.set(id, t); if (texData.has(id)) loadTex(t, texData.get(id)) }
+  return t
+}
+function setTexData(id, d) { texData.set(id, d); if (texs.has(id)) loadTex(texs.get(id), d) }
+function matFor(id) { let m = mats.get(id); if (!m) mats.set(id, m = new THREE.MeshStandardMaterial({ map: getTex(id), roughness: .7 })); return m }
+function labelTex(text, bg, w = 320, h = 240) {
+  const t = new THREE.CanvasTexture(cv(w, h, g => { g.fillStyle = bg; g.fillRect(0, 0, w, h); g.fillStyle = '#fff'; g.font = `bold ${h > 100 ? w / 8 : 44}px system-ui`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, w / 2, h / 2, w - 20) }))
+  t.colorSpace = THREE.SRGBColorSpace; return t
+}
+
+// ---------- escena ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap
+document.body.prepend(renderer.domElement)
+const cvs = renderer.domElement
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#0d0f14'); scene.fog = new THREE.Fog('#0d0f14', 45, 120)
+const camera = new THREE.PerspectiveCamera(55, 1, .1, 200); camera.position.set(0, 9, 15)
+const controls = new OrbitControls(camera, cvs)
+controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE }
+controls.enablePan = true; controls.screenSpacePanning = false; controls.zoomToCursor = true; const fv = new THREE.Vector3(); controls.maxPolarAngle = 1.45; controls.minDistance = 4; controls.maxDistance = 30; controls.target.set(0, 1.5, 0)
+scene.add(new THREE.HemisphereLight('#cfd8ff', '#20140c', 1.1))
+const sun = new THREE.DirectionalLight('#fff1dc', 2.2); sun.position.set(4, 16, 6); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048)
+Object.assign(sun.shadow.camera, { left: -10, right: 10, top: 10, bottom: -10, near: 1, far: 40 }); scene.add(sun)
+const felt = new THREE.Mesh(new THREE.CylinderGeometry(R, R, .4, 64), new THREE.MeshStandardMaterial({ color: '#1f5c4a', roughness: 1 })); felt.position.y = -.2; felt.receiveShadow = true
+const rim = new THREE.Mesh(new THREE.CylinderGeometry(R + .4, R + .4, .5, 64), new THREE.MeshStandardMaterial({ color: '#3a2416', roughness: .6 })); rim.position.y = -.27
+rim.castShadow = true; scene.add(felt, rim)
+function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix() }
+addEventListener('resize', resize); resize()
+
+// ---------- vista de objetos (todos los jugadores, anfitrión incluido) ----------
+const view = new Map()
+const edge = new THREE.MeshStandardMaterial({ color: '#efece4' }), blockMat = new THREE.MeshStandardMaterial({ color: '#c9a26b', roughness: .8 })
+const wood = new THREE.MeshStandardMaterial({ color: '#3a2416', roughness: .6 }), ivory = new THREE.MeshStandardMaterial({ color: '#efe6d2', roughness: .35, side: THREE.DoubleSide }), ebony = new THREE.MeshStandardMaterial({ color: '#2b2826', roughness: .35, side: THREE.DoubleSide })
+// perfiles [radio, altura] que se tornean alrededor del eje Y
+const PIECE_H = { '♟': .75, '♜': .85, '♞': .95, '♝': 1.02, '♛': 1.1, '♚': 1.25 }
+const BASE = [[0, 0], [.25, 0], [.25, .06], [.18, .1], [.12, .2]]
+const ball = (c, r) => [-1, -.5, 0, .5, 1, 1.57].map(t => [r * Math.cos(t), c + r * Math.sin(t)])
+const PROFILE = {
+  '♟': [...BASE, [.08, .42], [.14, .46], [.08, .5], ...ball(.62, .13)],
+  '♜': [...BASE, [.12, .58], [.19, .62], [.19, .85], [.13, .85], [.13, .76], [0, .76]],
+  '♞': [...BASE, [.13, .3], [0, .3]],
+  '♝': [...BASE, [.08, .6], [.15, .64], [.08, .68], [.12, .8], [.09, .9], [.03, .96], ...ball(.98, .04)],
+  '♛': [...BASE, [.09, .72], [.16, .76], [.09, .8], [.17, 1], [.1, 1], [0, 1.03], ...ball(1.06, .045)],
+  '♚': [...BASE, [.09, .78], [.16, .82], [.09, .86], [.17, 1.04], [0, 1.06]],
+}
+const HORSE = [[-.13, .3], [.15, .3], [.08, .48], [.06, .58], [.22, .56], [.25, .66], [.1, .84], [.04, .95], [-.02, .86], [-.12, .72], [-.15, .5]] // cabeza del caballo, mira a +x
+function build(d) {
+  let m
+  if (d.kind === 'deck') m = new THREE.Mesh(new THREE.BoxGeometry(cardDims(d.ar ?? STD_AR)[0], thick(d.n), cardDims(d.ar ?? STD_AR)[1]), [edge, edge, matFor(d.face), matFor(d.back), edge, edge])
+  else if (d.kind === 'die' && d.sides) { const M = dieModel(d.sides); m = new THREE.Mesh(M.geo, M.mats) }
+  else if (d.kind === 'die') m = new THREE.Mesh(new THREE.BoxGeometry(.6, .6, .6), [3, 4, 1, 6, 2, 5].map(n => matFor('die:' + n)))
+  else if (d.kind === 'pawn') {
+    const mat = new THREE.MeshStandardMaterial({ color: d.color, roughness: .4 }); m = new THREE.Group()
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(.13, .3, .9, 24), mat); b.position.y = -.15
+    const h = new THREE.Mesh(new THREE.SphereGeometry(.25, 24, 16), mat); h.position.y = .35; m.add(b, h); if (d.s) m.scale.setScalar(d.s)
+  } else if (d.kind === 'board') m = new THREE.Mesh(new THREE.BoxGeometry(d.w, .12, d.l), [wood, wood, matFor(d.tex), wood, wood, wood])
+  else if (d.kind === 'rack') { // rejilla del 4 en línea: dos paneles calados, las fichas se ven por los agujeros
+    const s = new THREE.Shape(); s.moveTo(-2.16, -1.6); s.lineTo(2.16, -1.6); s.lineTo(2.16, 1.6); s.lineTo(-2.16, 1.6); s.closePath()
+    for (let r = 0; r < 6; r++) for (let c = 0; c < 7; c++) { const h = new THREE.Path(); h.absarc((c - 3) * .6, -1.35 + r * .5, .21, 0, Math.PI * 2, true); s.holes.push(h) }
+    const geo = new THREE.ExtrudeGeometry(s, { depth: .06, bevelEnabled: false, curveSegments: 14 }), mat = new THREE.MeshStandardMaterial({ color: '#1f4fa8', roughness: .35 })
+    m = new THREE.Group()
+    for (const z of [.09, -.15]) { const p = new THREE.Mesh(geo, mat); p.position.z = z; m.add(p) }
+    for (const x of [-2.2, 2.2]) { const post = new THREE.Mesh(new THREE.BoxGeometry(.1, 3.2, .36), mat), foot = new THREE.Mesh(new THREE.BoxGeometry(.3, .12, 1.3), mat); post.position.x = foot.position.x = x; foot.position.y = -1.54; m.add(post, foot) }
+  }
+  else if (d.kind === 'disc') {
+    const mat = new THREE.MeshStandardMaterial({ color: d.color, roughness: .45 }) // c2: ficha de dos caras (reversi)
+    m = new THREE.Mesh(new THREE.CylinderGeometry(d.r, d.r, d.h, 32).rotateY(Math.PI / 2), d.tex === 'coin' ? [mat, matFor('coin:c'), matFor('coin:x')] : d.c2 ? [mat, mat, new THREE.MeshStandardMaterial({ color: d.c2, roughness: .45 })] : mat)
+  }
+  else if (d.kind === 'bag' || d.kind === 'cup') { // cuenco con fichas / cubilete: cilindro abierto con fondo
+    const [rt, rb, h] = d.kind === 'cup' ? [.95, .8, 1.5] : [.7, .5, .5], mat = new THREE.MeshStandardMaterial({ color: d.kind === 'cup' ? '#5d3c25' : '#3a2416', side: THREE.DoubleSide, roughness: .7 })
+    m = new THREE.Group(); m.add(new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, 28, 1, true), mat))
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(rb, 28).rotateX(-Math.PI / 2), mat); floor.position.y = -h / 2 + .02; m.add(floor)
+    if (d.kind === 'bag') { const heap = new THREE.Mesh(new THREE.SphereGeometry(.56, 20, 12), new THREE.MeshStandardMaterial({ color: d.color, roughness: .5 })); heap.scale.y = .35; heap.position.y = .05; m.add(heap) }
+  }
+  else if (d.kind === 'gun') { // pistola de cotillón: cuerpo, culata, caño y boca acampanada; el caño mira a +x
+    const pink = new THREE.MeshStandardMaterial({ color: '#e93d82', roughness: .35 }), gold = new THREE.MeshStandardMaterial({ color: '#f2c230', roughness: .3, metalness: .4 })
+    const part = (geo, mat, x, y, rz = 0) => { const p = new THREE.Mesh(geo, mat); p.position.set(x, y, 0); p.rotation.z = rz; m.add(p) }
+    m = new THREE.Group()
+    part(new THREE.BoxGeometry(.7, .26, .22), pink, -.05, .12); part(new THREE.BoxGeometry(.22, .42, .2), pink, -.25, -.12, .3)
+    part(new THREE.CylinderGeometry(.08, .08, .4, 16), gold, .45, .12, -Math.PI / 2); part(new THREE.CylinderGeometry(.17, .08, .2, 20, 1, true), gold, .72, .12, -Math.PI / 2)
+    part(new THREE.TorusGeometry(.09, .025, 8, 16), gold, -.08, -.06, Math.PI / 2) // guardamonte
+  }
+  else if (d.kind === 'pin') m = new THREE.Mesh(new THREE.LatheGeometry([[0, 0], [.14, 0], [.19, .25], [.2, .4], [.12, .7], [.09, .8], [.13, .95], [.11, 1.05], [0, 1.1]].map(q => new THREE.Vector2(q[0], q[1] - .55)), 20), new THREE.MeshStandardMaterial({ color: '#f4f1ea', roughness: .3, side: THREE.DoubleSide }))
+  else if (d.kind === 'stick') { m = new THREE.Mesh(new THREE.BoxGeometry(.12, .06, 3), new THREE.MeshStandardMaterial({ color: d.color, roughness: .5 })); m.add(new THREE.Mesh(new THREE.BoxGeometry(.28, .2, 3), new THREE.MeshBasicMaterial({ visible: false }))) } // caja invisible más gorda: un palito tan fino es difícil de agarrar
+  else if (d.kind === 'ball') m = new THREE.Mesh(new THREE.SphereGeometry(d.r, 24, 16), new THREE.MeshStandardMaterial({ color: d.color, roughness: .25 }))
+  else if (d.kind === 'block') m = new THREE.Mesh(new THREE.BoxGeometry(.5, (d.th || .15) * 2, 1.5), blockMat)
+  else if (d.kind === 'tile') m = new THREE.Mesh(new THREE.BoxGeometry(...tileSize(d.face)), [edge, edge, matFor(d.face), matFor(d.back), edge, edge])
+  else if (d.kind === 'token') { // pieza de ajedrez torneada; tex = 'chess:' + w|b + pieza
+    const p = d.tex[7], mat = d.tex[6] === 'w' ? ivory : ebony, v2 = q => new THREE.Vector2(q[0], q[1])
+    const inner = new THREE.Group(); inner.position.y = -(PIECE_H[p] || .75) / 2
+    inner.add(new THREE.Mesh(new THREE.LatheGeometry((PROFILE[p] || PROFILE['♟']).map(v2), 28), mat))
+    if (p === '♞') inner.add(new THREE.Mesh(new THREE.ExtrudeGeometry(new THREE.Shape(HORSE.map(v2)), { depth: .14, bevelEnabled: false }).translate(0, 0, -.07).rotateY(Math.PI / 2), mat))
+    if (p === '♚') for (const [w, h, y] of [[.05, .2, 1.15], [.16, .05, 1.17]]) { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, .05), mat); b.position.y = y; inner.add(b) }
+    m = new THREE.Group(); m.add(inner)
+  }
+  else if (d.kind === 'paper') {
+    const W = 420, H = 594, c = cv(W, H, g => { g.fillStyle = '#fdfcf7'; g.fillRect(0, 0, W, H); if (d.tex) g.drawImage(gen(d.tex), 0, 0, W, H); g.lineWidth = 4; g.lineCap = 'round' }), g = c.getContext('2d')
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace
+    m = new THREE.Mesh(new THREE.BoxGeometry(2.1, .02, 2.97), [edge, edge, new THREE.MeshStandardMaterial({ map: t, roughness: .9 }), edge, edge, edge])
+    m.userData.ink = (s, col) => { g.strokeStyle = col; g.beginPath(); g.moveTo(s[0] * W, (1 - s[1]) * H); g.lineTo(s[2] * W, (1 - s[3]) * H); g.stroke(); t.needsUpdate = true }
+    for (const [s, col] of d.strokes || []) m.userData.ink(s, col)
+  } else {
+    m = new THREE.Group()
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(.9, 1.3), new THREE.MeshStandardMaterial({ map: getTex(d.tex), side: THREE.DoubleSide, alphaTest: .5 })); p.position.y = .05
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(.45, .45, .08, 24), new THREE.MeshStandardMaterial({ color: '#15171c' })); b.position.y = -.61; m.add(p, b)
+  }
+  m.traverse(x => { x.castShadow = x.receiveShadow = true }); m.userData.id = d.id
+  if (d.kind !== 'paper') { m.userData.ink = (s, c) => ribbon(m, s, c); for (const [s, c] of d.strokes || []) ribbon(m, s, c) }
+  return m
+}
+function upsert(d) {
+  let v = view.get(d.id)
+  if (v) { scene.remove(v.mesh); v.mesh.traverse(x => x.geometry?.dispose()) }
+  else view.set(d.id, v = { tp: new THREE.Vector3(), tq: new THREE.Quaternion(), fresh: true })
+  const m = build(d)
+  if (v.fresh) m.position.y = -50; else { m.position.copy(v.mesh.position); m.quaternion.copy(v.mesh.quaternion) }
+  v.d = d; v.mesh = m; scene.add(m)
+}
+
+// ---------- dados de rol: d4, d8, d10, d12 y d20 ----------
+// la forma sale de los poliedros de three (el d10 se arma a mano); cada cara es un grupo de material con su número
+const DIE_R = { 4: .5, 8: .42, 10: .42, 12: .42, 20: .46 }, DIE_COL = { 4: '#d93b3b', 8: '#2f6fc0', 10: '#2f8f4a', 12: '#7d44b8', 20: '#e08a1c' }, dieCache = {}
+function d10Tris() { // trapezoedro pentagonal: dos anillos de 5 vértices desfasados; e hace que cada cometa sea plana
+  const c = Math.cos(Math.PI / 5), e = (1 - c) / (1 + c), T = [0, 1, 0], B = [0, -1, 0], ring = (k, y) => [Math.cos(k * Math.PI * 2 / 5), y, Math.sin(k * Math.PI * 2 / 5)], out = []
+  for (let k = 0; k < 5; k++) { const U0 = ring(k, e), U1 = ring(k + 1, e), L0 = ring(k + .5, -e), L1 = ring(k + 1.5, -e); out.push(...T, ...U0, ...L0, ...T, ...L0, ...U1, ...B, ...L0, ...U1, ...B, ...U1, ...L1) }
+  return out
+}
+function dieFaceTex(sides, f, val, verts) {
+  const P = () => new THREE.Vector3(), t = new THREE.CanvasTexture(cv(128, 128, g => {
+    g.fillStyle = DIE_COL[sides]; g.fillRect(0, 0, 128, 128); g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'
+    const px = ([u, v]) => [u * 128, (1 - v) * 128]
+    if (sides === 4) for (const q of f.pts) { // en el d4 vale la punta de arriba: cada cara muestra el número de sus tres puntas, mirando hacia ellas
+      const [x, y] = px(f.uvOf(P().lerpVectors(f.c, q, .6))); g.save(); g.translate(x, y); g.rotate(Math.atan2(x - 64, 64 - y)); g.font = 'bold 30px Georgia,serif'
+      g.fillText(verts.findIndex(r => r.distanceToSquared(q) < 1e-6) + 1, 0, 0); g.restore()
+    }
+    else { g.font = `bold ${sides === 12 ? 46 : 34}px Georgia,serif`; g.fillText(val, 64, 66); if (val === 6 || val === 9) g.fillRect(55, sides === 12 ? 90 : 84, 18, 3) } // 6 y 9 subrayados
+  }))
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t
+}
+function dieModel(sides) {
+  if (dieCache[sides]) return dieCache[sides]
+  const src = { 4: () => new THREE.TetrahedronGeometry(1), 8: () => new THREE.OctahedronGeometry(1), 12: () => new THREE.DodecahedronGeometry(1), 20: () => new THREE.IcosahedronGeometry(1) }[sides]
+  const pos = src ? src().attributes.position.array : d10Tris(), faces = [], P = () => new THREE.Vector3()
+  for (let i = 0; i < pos.length; i += 9) { // agrupar triángulos por normal: cada grupo es una cara del dado
+    let a = P().fromArray(pos, i), b = P().fromArray(pos, i + 3), c = P().fromArray(pos, i + 6)
+    const n = P().subVectors(b, a).cross(P().subVectors(c, a)).normalize()
+    if (n.dot(P().add(a).add(b).add(c)) < 0) { n.negate(); [b, c] = [c, b] } // todas mirando hacia afuera
+    let f = faces.find(f => f.n.dot(n) > .999); if (!f) faces.push(f = { n, tris: [], pts: [] })
+    f.tris.push([a, b, c]); for (const q of [a, b, c]) if (!f.pts.some(r => r.distanceToSquared(q) < 1e-6)) f.pts.push(q)
+  }
+  const R = DIE_R[sides], verts = [], vi = q => { let i = verts.findIndex(r => r.distanceToSquared(q) < 1e-6); if (i < 0) i = verts.push(q) - 1; return i }
+  const POS = [], UV = [], geo = new THREE.BufferGeometry()
+  for (const [fi, f] of faces.entries()) {
+    f.c = f.pts.reduce((acc, q) => acc.add(q), P()).multiplyScalar(1 / f.pts.length)
+    f.u = P().subVectors(f.pts[0], f.c).normalize(); f.w = P().crossVectors(f.n, f.u); f.rad = Math.max(...f.pts.map(q => q.distanceTo(f.c)))
+    f.uvOf = q => { const d = P().subVectors(q, f.c); return [d.dot(f.u) / f.rad / 2 + .5, d.dot(f.w) / f.rad / 2 + .5] }
+    geo.addGroup(POS.length / 3, f.tris.length * 3, fi)
+    for (const tr of f.tris) for (const q of tr) { POS.push(q.x * R, q.y * R, q.z * R); UV.push(...f.uvOf(q)) }
+    const ang = q => { const d = P().subVectors(q, f.c); return Math.atan2(d.dot(f.w), d.dot(f.u)) }
+    f.poly = f.pts.slice().sort((q, r) => ang(q) - ang(r)).map(vi) // contorno antihorario visto desde afuera, como lo pide cannon
+  }
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(POS, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(UV, 2)); geo.computeVertexNormals()
+  const vals = faces.map((_, i) => i + 1)
+  return dieCache[sides] = { geo, faces, verts, vals, R, mats: faces.map((f, i) => new THREE.MeshStandardMaterial({ roughness: .35, map: dieFaceTex(sides, f, vals[i], verts) })) }
+}
+const dieShape = sides => { const M = dieModel(sides); return new CANNON.ConvexPolyhedron({ vertices: M.verts.map(q => new CANNON.Vec3(q.x * M.R, q.y * M.R, q.z * M.R)), faces: M.faces.map(f => f.poly) }) }
+console.assert([4, 8, 10, 12, 20].every(n => dieModel(n).faces.length === n), 'caras de los dados de rol')
+
+// tinta del fibrón sobre cualquier objeto (y la mesa): cintas finas en coordenadas del objeto, así lo acompañan si se mueve
+// s = [ax,ay,az, bx,by,bz, nx,ny,nz]: tramo de a a b sobre una cara con normal n
+const inkMat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4 })
+const INK_MAX = 2000, V = () => new THREE.Vector3()
+function ribbon(target, s, c) {
+  let r = target.userData.ribbon
+  if (!r) {
+    const g = new THREE.BufferGeometry()
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(INK_MAX * 18), 3)); g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(INK_MAX * 18), 3)); g.setDrawRange(0, 0)
+    r = new THREE.Mesh(g, inkMat); r.raycast = () => {}; r.frustumCulled = false; r.userData.n = 0; target.add(r); target.userData.ribbon = r
+  }
+  if (r.userData.n >= INK_MAX) return
+  const a = V().fromArray(s, 0), b = V().fromArray(s, 3), n = V().fromArray(s, 6).normalize(), d = V().subVectors(b, a)
+  if (d.lengthSq() < 1e-6) { d.set(1, 0, 0).cross(n); if (d.lengthSq() < 1e-6) d.set(0, 0, 1).cross(n); d.setLength(.06); a.addScaledVector(d, -.5); b.copy(a).add(d) } // un punto
+  const w = V().crossVectors(d, n).setLength(.04), p = r.geometry.attributes.position, col = r.geometry.attributes.color, k = r.userData.n * 6, cc = new THREE.Color(c)
+  ;[V().subVectors(a, w), V().addVectors(a, w), V().addVectors(b, w), V().subVectors(a, w), V().addVectors(b, w), V().subVectors(b, w)].forEach((v, i) => { p.setXYZ(k + i, v.x, v.y, v.z); col.setXYZ(k + i, cc.r, cc.g, cc.b) })
+  r.userData.n++; p.needsUpdate = col.needsUpdate = true; r.geometry.setDrawRange(0, r.userData.n * 6)
+}
+function unink(target) { const r = target.userData.ribbon; if (r) { target.remove(r); r.geometry.dispose(); target.userData.ribbon = null } }
+
+// ---------- sonido: todo sintetizado con WebAudio, sin archivos ----------
+let actx = null, noiseB = null, sndOn = (() => { try { return localStorage.mesaSonido !== 'no' } catch { return true } })()
+addEventListener('pointerdown', () => { try { actx ??= new AudioContext() } catch {} if (actx?.state === 'suspended') actx.resume() }) // el navegador exige un gesto antes de sonar
+function tone(o) {
+  const a = actx; if (!a || !sndOn || a.state !== 'running' || !(o.vol > .005)) return
+  const t = a.currentTime + (o.at || 0), g = a.createGain(), dur = o.dur || .06; let src
+  g.gain.setValueAtTime(Math.min(1, o.vol), t); g.gain.exponentialRampToValueAtTime(.0005, t + dur); g.connect(a.destination)
+  if (!o.wave) { // ruido filtrado: golpes, papel, cartas
+    if (!noiseB) { noiseB = a.createBuffer(1, a.sampleRate, a.sampleRate); const d = noiseB.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1 }
+    src = a.createBufferSource(); src.buffer = noiseB; const f = a.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = o.f; f.Q.value = o.q || 1; src.connect(f); f.connect(g); src.start(t, Math.random() * .5)
+  } else { src = a.createOscillator(); src.type = o.wave; src.frequency.setValueAtTime(o.f, t); if (o.f2) src.frequency.exponentialRampToValueAtTime(o.f2, t + dur); src.connect(g); src.start(t) }
+  src.stop(t + dur + .05)
+}
+const HIT = { // cómo suena cada material al chocar
+  card: v => tone({ f: 3800, q: .8, dur: .035, vol: v * .3 }),
+  dice: v => { tone({ f: 2300, q: 4, dur: .04, vol: v * .9 }); tone({ wave: 'sine', f: 520, f2: 300, dur: .05, vol: v * .2 }) },
+  wood: v => { tone({ f: 1100, q: 5, dur: .07, vol: v * .9 }); tone({ wave: 'sine', f: 240, f2: 150, dur: .08, vol: v * .3 }) },
+  chip: v => tone({ f: 4500, q: 8, dur: .03, vol: v * .8 }),
+  tile: v => tone({ f: 2800, q: 6, dur: .04, vol: v * .8 }),
+  glass: v => tone({ wave: 'sine', f: 2400 + Math.random() * 700, dur: .14, vol: v * .25 }),
+  ball: v => tone({ wave: 'sine', f: 160, f2: 90, dur: .12, vol: v * .6 }),
+  plastic: v => tone({ f: 1600, q: 3, dur: .05, vol: v * .7 }),
+}
+const sndP = new THREE.Vector3()
+function hitSound(k, v, x, y, z) { (HIT[k] || HIT.wood)(v * Math.min(1, 10 / (camera.position.distanceTo(sndP.set(x, y, z)) + 1))) } // más lejos, más bajo
+const riffle = () => { for (let r = 0; r < 2; r++) for (let i = 0; i < 16; i++) tone({ f: 2800 + Math.random() * 1600, q: 1.5, dur: .025, vol: .1, at: r * .55 + i * .028 }) }
+const popSnd = () => { tone({ wave: 'sine', f: 190, f2: 50, dur: .18, vol: .5 }); tone({ f: 1400, q: .6, dur: .25, vol: .35 }); for (let i = 0; i < 6; i++) tone({ wave: 'sine', f: 2000 + Math.random() * 2500, dur: .08, vol: .05, at: .05 + i * .04 }) }
+const pingSnd = () => { tone({ wave: 'sine', f: 880, f2: 1320, dur: .2, vol: .2 }); tone({ wave: 'sine', f: 1320, dur: .25, vol: .12, at: .12 }) }
+
+// registro de jugadas en pantalla: las últimas 6, las viejas se apagan
+function addLog(text, color) {
+  const li = document.createElement('li'); li.textContent = text; li.style.setProperty('--c', color || '#888'); $('log').append(li)
+  while ($('log').children.length > 6) $('log').firstChild.remove()
+  setTimeout(() => li.classList.add('old'), 15000)
+}
+// señalar: dos aros que se expanden, del color de quien señala
+function pingFx([x, z], c) {
+  pingSnd()
+  const rings = [0, 1].map(() => { const r = new THREE.Mesh(new THREE.RingGeometry(.3, .42, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: c, transparent: true, depthTest: false })); r.renderOrder = 11; r.position.set(x, .05, z); scene.add(r); return r })
+  let t = 0
+  fxs.push(dt => {
+    t += dt; rings.forEach((r, i) => { const u = Math.max(0, Math.min(1, (t - i * .35) / 1.1)); r.scale.setScalar(.3 + u * 3); r.material.opacity = 1 - u })
+    if (t > 1.6) { rings.forEach(r => { scene.remove(r); r.geometry.dispose(); r.material.dispose() }); return false }
+    return true
+  })
+}
+// el juez marca en rojo lo que se movió
+function flashObj(id) {
+  const v = view.get(id); if (!v) return
+  const h = new THREE.BoxHelper(v.mesh, '#ff3b3b'); scene.add(h); let t = 0
+  fxs.push(dt => { t += dt; const w = view.get(id); if (!w || t > 2) { scene.remove(h); h.geometry.dispose(); return false } h.setFromObject(w.mesh); h.visible = (t * 6 | 0) % 2 === 0; return true })
+}
+
+// confeti: papelitos que salen disparados, revolotean y quedan un rato sobre la mesa o el piso
+const CONF = ['#e5484d', '#f5a524', '#f2c230', '#46a758', '#3e8ed0', '#8e4ec6', '#e93d82', '#ffffff'].map(c => new THREE.Color(c))
+const confGeo = new THREE.PlaneGeometry(.17, .1), confMat = new THREE.MeshStandardMaterial({ side: THREE.DoubleSide, roughness: .6 })
+function confetti(p, d) {
+  const N = 240, im = new THREE.InstancedMesh(confGeo, confMat, N), dir = new THREE.Vector3(...d).normalize(), ps = []
+  im.frustumCulled = false; scene.add(im)
+  for (let i = 0; i < N; i++) {
+    const v = dir.clone().multiplyScalar(5 + Math.random() * 7).add(new THREE.Vector3(rnd(4), rnd(4), rnd(4)))
+    ps.push({ p: new THREE.Vector3(...p), v, r: new THREE.Euler(rnd(6), rnd(6), rnd(6)), w: new THREE.Vector3(rnd(24), rnd(24), rnd(24)), rest: false })
+    im.setColorAt(i, CONF[i % CONF.length])
+  }
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3()
+  let t = 0
+  fxs.push(dt => {
+    t += dt; const s = t < 10 ? 1 : Math.max(0, 1 - (t - 10) / 2) // a los 10 s se achican hasta desaparecer
+    for (let i = 0; i < N; i++) {
+      const c = ps[i]
+      if (!c.rest) {
+        c.v.y -= 9 * dt; c.v.multiplyScalar(1 - Math.min(.9, 2.2 * dt)) // mucho rozamiento con el aire: caen planeando
+        c.p.addScaledVector(c.v, dt); c.r.x += c.w.x * dt; c.r.y += c.w.y * dt; c.r.z += c.w.z * dt
+        const floor = Math.hypot(c.p.x, c.p.z) < R ? .012 : FLOOR + .012
+        if (c.p.y <= floor) { c.p.y = floor; c.rest = true; c.r.set(-Math.PI / 2, 0, c.r.z) }
+      }
+      im.setMatrixAt(i, m4.compose(c.p, q.setFromEuler(c.r), sc.setScalar(s)))
+    }
+    im.instanceMatrix.needsUpdate = true
+    if (t > 12) { scene.remove(im); im.dispose(); return false }
+    return true
+  })
+}
+
+// mezclar a la vista: el mazo se corta en dos mitades que se abren y se vuelven a entreverar, dos veces
+const fxs = []
+function shuffleFx(v) {
+  if (!v || v.fx) return
+  const h = thick(v.d.n), back = matFor(v.d.back), half = () => new THREE.Mesh(new THREE.BoxGeometry(1, h / 2, 1.4), [edge, edge, back, back, edge, edge])
+  const g = new THREE.Group(), A = half(), B = half(); g.add(A, B); scene.add(g); v.fx = true
+  let t = 0
+  fxs.push(dt => {
+    t += dt / 1.1
+    const m = v.mesh // upsert puede haberlo reemplazado
+    if (t >= 1 || !view.has(v.d.id)) { scene.remove(g); m.visible = true; v.fx = false; return false }
+    const open = Math.abs(Math.sin(t * Math.PI * 2)), riffle = Math.sin(t * 90) * .03 * open
+    m.visible = false; g.position.copy(m.position); g.quaternion.copy(m.quaternion)
+    A.position.set(-.6 * open, h / 4 + .25 * open + riffle, 0); A.rotation.z = -.45 * open
+    B.position.set(.6 * open, -h / 4 + .25 * open - riffle, 0); B.rotation.z = .45 * open
+    return true
+  })
+}
+
+// ---------- habitación: la mesa en el medio, los juegos en cajas sobre aparadores ----------
+const FLOOR = -6, shelfBoxes = []
+let fire, clockH, clockM
+// tapa ilustrada de cada caja: piezas del propio juego en abanico y una cinta con el nombre
+const BOXC = ['#e5484d', '#3e8ed0', '#46a758', '#f5a524', '#8e4ec6', '#12a594', '#e93d82', '#a18072', '#1f3f7a', '#7a2f3a', '#2f6b5c', '#b08a3c', '#5d3c25', '#c8102e', '#3a4a7a', '#d9a85a', '#2a1b4a', '#4a6a63']
+function cover(key, col) {
+  return cv(512, 244, g => {
+    g.fillStyle = col; g.fillRect(0, 0, 512, 244)
+    const sh = g.createRadialGradient(256, 90, 30, 256, 122, 300); sh.addColorStop(0, '#fff3'); sh.addColorStop(1, '#0006'); g.fillStyle = sh; g.fillRect(0, 0, 512, 244)
+    g.strokeStyle = '#f4efd8'; g.lineWidth = 6; g.strokeRect(12, 12, 488, 220); g.lineWidth = 2; g.strokeRect(22, 22, 468, 200)
+    const art = { chess: ['chess:board'], damas: ['chess:board'], mahjong: ['mj:m1', 'mj:d0', 'mj:p5', 'mj:s3'], esp: ['esp:7e', 'esp:1o', 'esp:12c'], poker: ['std:K♥', 'std:A♠', 'std:Q♦'], domino: ['dom:3-5', 'dom:6-6', 'dom:1-2'], dados: ['die:3', 'die:5', 'die:6'],
+      backgammon: ['bg:board'], truco: ['esp:1e', 'esp:7o', 'esp:3c'], go: ['go:board'], reversi: ['rev:board'], ludo: ['ludo:board'], oca: ['oca:board'], mancala: ['man:board'], tarot: ['tarot:0', 'tarot:21', 'tarot:13'] }[key] || []
+    g.shadowColor = '#0009'; g.shadowBlur = 12; g.shadowOffsetY = 4
+    art.forEach((id, i) => { const c = gen(id), u = i - (art.length - 1) / 2, h = 112, w = Math.min(h * c.width / c.height, 260), hh = w * c.height / c.width; g.save(); g.translate(256 + u * w * .85, 88 + Math.abs(u) * 6); g.rotate(u * .2); g.drawImage(c, -w / 2, -hh / 2, w, hh); g.restore() })
+    const dot = (x, y, r, c) => { g.fillStyle = c; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill() }
+    if (key === 'chess') { g.fillStyle = '#fff'; g.font = '90px serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('♞︎', 256, 92) }
+    if (key === 'damas') [[216, 68, '#b3202a'], [246, 98, '#1c1a19'], [276, 68, '#b3202a'], [296, 112, '#1c1a19']].forEach(([x, y, c]) => dot(x, y, 13, c))
+    if (key === 'c4') { g.fillStyle = '#1f4fa8'; g.fillRect(166, 34, 180, 116); for (let r = 0; r < 4; r++) for (let c = 0; c < 6; c++) dot(184 + c * 29, 52 + r * 27, 10, (r * 5 + c * 3) % 4 === 0 ? '#f2c230' : (r + c) % 3 === 0 ? '#d92b2b' : '#102a5e') }
+    if (key === 'mikado') { g.lineCap = 'round'; g.lineWidth = 6; for (let i = 0; i < 14; i++) { g.strokeStyle = ['#f2c230', '#d92b2b', '#1f4fa8', '#1f7a3d', '#15171c'][i % 5]; g.beginPath(); const t = i * .45 - 3; g.moveTo(256 + Math.cos(t) * 110, 90 + Math.sin(t) * 60); g.lineTo(256 - Math.cos(t) * 110, 90 - Math.sin(t) * 60); g.stroke() } }
+    if (key === 'tower') for (let r = 0; r < 7; r++) for (let i = 0; i < 3; i++) { g.fillStyle = (r + i) % 2 ? '#c9a26b' : '#b08a5a'; r % 2 ? g.fillRect(226 + i * 20 - 4, 140 - r * 17, 18, 15) : g.fillRect(208, 140 - r * 17 + i * 5, 96, 4.5) }
+    if (key === 'bowling') { for (let r = 0; r < 4; r++) for (let i = 0; i <= r; i++) { const x = 256 + (i - r / 2) * 34, y = 40 + r * 26; g.fillStyle = '#f4f1ea'; g.beginPath(); g.ellipse(x, y, 10, 20, 0, 0, 7); g.fill(); g.fillStyle = '#c8102e'; g.fillRect(x - 8, y - 9, 16, 4) } dot(256, 152, 26, '#1f3f7a') }
+    g.fillStyle = '#f4efd8'; g.fillRect(60, 170, 392, 50); g.shadowColor = 'transparent'
+    g.fillStyle = '#23211f'; g.font = 'bold 34px Georgia,serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(GAMES[key], 256, 196, 372)
+  })
+}
+{
+  const tex = (w, h, draw, rx = 1, ry = 1) => { const t = new THREE.CanvasTexture(cv(w, h, draw)); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); t.anisotropy = 8; return t }
+  const std = p => new THREE.MeshStandardMaterial({ roughness: .9, ...p }), pick = a => a[Math.random() * a.length | 0]
+  const planks = tex(256, 256, (g, w) => {
+    g.fillStyle = '#6b4a2f'; g.fillRect(0, 0, w, w); g.strokeStyle = '#4a321f'; g.lineWidth = 3
+    for (let i = 0; i < 4; i++) { g.strokeRect(-2, i * 64, w + 4, 64); g.beginPath(); g.moveTo(i * 97 % 256, i * 64); g.lineTo(i * 97 % 256, i * 64 + 64); g.stroke() }
+  }, 6, 6)
+  const paper = tex(256, 512, (g, w, h) => { // empapelado con rombos arriba, friso de madera hasta la altura de la mesa
+    g.fillStyle = '#3f5a55'; g.fillRect(0, 0, w, h); g.fillStyle = '#4b6a63'
+    for (let y = 0; y < 336; y += 48) for (let x = y / 48 % 2 * 32 + 16; x < w; x += 64) { g.beginPath(); g.moveTo(x, y + 8); g.lineTo(x + 10, y + 24); g.lineTo(x, y + 40); g.lineTo(x - 10, y + 24); g.fill() }
+    g.fillStyle = '#4a2f1d'; g.fillRect(0, 340, w, h - 340); g.fillStyle = '#6b4a2f'; g.fillRect(0, 340, w, 10)
+    g.strokeStyle = '#33200f'; g.lineWidth = 4; for (let x = 0; x < w; x += 128) g.strokeRect(x + 14, 366, 100, 112)
+    g.fillStyle = '#2b1a0d'; g.fillRect(0, h - 20, w, 20)
+  }, 8, 1)
+  const rugTex = tex(512, 512, g => {
+    const ring = (r, c) => { g.fillStyle = c; g.beginPath(); g.arc(256, 256, r, 0, 7); g.fill() }
+    ring(256, '#5c1f2a'); ring(240, '#d9b26a'); ring(232, '#7a2f3a'); ring(150, '#d9b26a'); ring(144, '#5c1f2a')
+    for (let i = 0; i < 24; i++) { g.fillStyle = i % 2 ? '#d9b26a' : '#2f6b5c'; g.beginPath(); g.arc(256 + Math.cos(i * Math.PI / 12) * 191, 256 + Math.sin(i * Math.PI / 12) * 191, 15, 0, 7); g.fill() }
+  })
+  // caras hacia adentro: si la cámara sale de la habitación, la pared no tapa la vista
+  const inside = p => new THREE.MeshStandardMaterial({ roughness: 1, side: THREE.BackSide, ...p })
+  const wall = inside({ map: paper })
+  const room = new THREE.Mesh(new THREE.BoxGeometry(46, 18, 46), [wall, wall, inside({ color: '#8d8778' }), inside({ map: planks }), wall, wall]); room.position.y = FLOOR + 9; room.receiveShadow = true
+  const leg = new THREE.Mesh(new THREE.CylinderGeometry(.9, 1.9, 5.5, 24), wood); leg.position.y = -3.25
+  const rug = new THREE.Mesh(new THREE.CircleGeometry(13, 48).rotateX(-Math.PI / 2), std({ map: rugTex })); rug.position.y = FLOOR + .02; rug.receiveShadow = true
+  // decoración contra las paredes: pared 0..3, corrimiento lateral, altura y separación de la pared
+  const place = (m, wl, off, y, dep) => { const a = wl * Math.PI / 2, sx = Math.sin(a), sz = Math.cos(a); m.position.set(sx * (23 - dep) + sz * off, y, sz * (23 - dep) - sx * off); m.rotation.y = a; scene.add(m); return m }
+  const slab = (w, h, d, frontMat, side) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), [side, side, side, side, side, frontMat])
+  const books = std({ map: tex(256, 512, g => {
+    g.fillStyle = '#2b1a0d'; g.fillRect(0, 0, 256, 512)
+    for (let s = 0; s < 5; s++) { let x = 12; while (x < 236) { const w = 12 + Math.random() * 18, h = 58 + Math.random() * 30; g.fillStyle = pick(['#7a2f3a', '#2f6b5c', '#1f3f7a', '#d9b26a', '#5d3c25', '#8e4ec6', '#c9c2b0', '#a8432e']); g.fillRect(x, s * 102 + 96 - h, w - 2, h); x += w } g.fillStyle = '#5d3c25'; g.fillRect(0, s * 102 + 96, 256, 8) }
+  }) })
+  const door = std({ map: tex(128, 256, g => { g.fillStyle = '#5d3c25'; g.fillRect(0, 0, 128, 256); g.strokeStyle = '#33200f'; g.lineWidth = 4; g.strokeRect(16, 16, 96, 100); g.strokeRect(16, 132, 96, 108); g.fillStyle = '#d9b26a'; g.beginPath(); g.arc(108, 126, 6, 0, 7); g.fill() }) })
+  const nightTex = tex(256, 180, g => {
+    const gr = g.createLinearGradient(0, 0, 0, 180); gr.addColorStop(0, '#0b1030'); gr.addColorStop(1, '#3a4a7a'); g.fillStyle = gr; g.fillRect(0, 0, 256, 180)
+    g.fillStyle = '#fff'; for (let i = 0; i < 60; i++) g.fillRect(Math.random() * 256, Math.random() * 130, 1.5, 1.5)
+    g.fillStyle = '#f4efd8'; g.beginPath(); g.arc(190, 46, 18, 0, 7); g.fill()
+    g.fillStyle = '#e8e2d2'; g.fillRect(124, 0, 8, 180); g.fillRect(0, 86, 256, 8); g.lineWidth = 12; g.strokeStyle = '#e8e2d2'; g.strokeRect(0, 0, 256, 180)
+  })
+  const art = () => std({ map: tex(256, 180, g => {
+    g.fillStyle = pick(['#e9dcc0', '#243b53', '#3f5a55']); g.fillRect(0, 0, 256, 180)
+    for (let i = 0; i < 7; i++) { g.fillStyle = pick(['#e5484d', '#f5a524', '#3e8ed0', '#46a758', '#f4efd8', '#15171c']); g.beginPath(); Math.random() < .5 ? g.arc(Math.random() * 256, Math.random() * 180, 12 + Math.random() * 40, 0, 7) : g.rect(Math.random() * 200, Math.random() * 130, 20 + Math.random() * 80, 20 + Math.random() * 60); g.fill() }
+    g.lineWidth = 14; g.strokeStyle = '#b08a3c'; g.strokeRect(0, 0, 256, 180)
+  }) })
+  const gold = std({ color: '#b08a3c', roughness: .4 }), curtain = std({ color: '#7a2f3a' }), glow = new THREE.MeshBasicMaterial({ color: '#ffd9a0' })
+  for (let wl = 0; wl < 4; wl++) {
+    for (const off of [-15, 15]) wl === 0 && off < 0 ? 0 /* ahí va la chimenea */ : wl === 2 && off > 0 ? place(slab(5, 11, .3, door, wood), wl, off, FLOOR + 5.5, .15) : place(slab(6, 13, 1.6, books, wood), wl, off, FLOOR + 6.5, .8)
+    if (wl % 2) { // ventana a la noche con cortinas
+      place(slab(6.5, 4.4, .3, std({ map: nightTex, emissive: '#ffffff', emissiveMap: nightTex, emissiveIntensity: .7 }), std({ color: '#e8e2d2' })), wl, 0, 8.4, .15)
+      for (const off of [-3.9, 3.9]) place(new THREE.Mesh(new THREE.BoxGeometry(1.2, 5.4, .3), curtain), wl, off, 8.2, .3)
+      place(new THREE.Mesh(new THREE.CylinderGeometry(.08, .08, 9.6).rotateZ(Math.PI / 2), gold), wl, 0, 10.95, .3)
+    } else place(slab(5.4, 3.6, .2, art(), gold), wl, 0, 7.9, .1)
+    for (const off of [-10.6, 10.6]) place(new THREE.Mesh(new THREE.SphereGeometry(.4, 16, 12), glow), wl, off, 7.5, .5) // apliques
+  }
+  for (const [px, pz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) { // plantas en las esquinas
+    const pot = new THREE.Mesh(new THREE.CylinderGeometry(1, .7, 1.8, 16), std({ color: '#a8552e' })); pot.position.set(px * 20.3, FLOOR + .9, pz * 20.3); scene.add(pot)
+    for (let i = 0; i < 6; i++) { const leaf = new THREE.Mesh(new THREE.IcosahedronGeometry(.9 + Math.random() * .7, 0), std({ color: pick(['#2f6b3c', '#3d8a4c', '#25552f']), flatShading: true })); leaf.position.set(px * 20.3 + rnd(1.6), FLOOR + 2.6 + Math.random() * 2.6, pz * 20.3 + rnd(1.6)); scene.add(leaf) }
+  }
+  // chimenea encendida
+  const brick = std({ map: tex(128, 128, g => {
+    g.fillStyle = '#7a3b2e'; g.fillRect(0, 0, 128, 128); g.strokeStyle = '#3d1d16'; g.lineWidth = 3
+    for (let y = 0; y < 128; y += 32) { g.strokeRect(-2, y, 132, 32); for (let x = y / 32 % 2 * 32; x < 128; x += 64) { g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + 32); g.stroke() } }
+  }, 3, 3) }), box = (w, h, d, mat) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat)
+  place(box(8, 8, 1.8, brick), 0, -15, FLOOR + 4, .9); place(box(5, 10, 1.2, brick), 0, -15, FLOOR + 13, .6); place(box(9.2, .45, 2.4, wood), 0, -15, FLOOR + 8.2, 1.2)
+  place(box(4.4, 4.2, .1, new THREE.MeshBasicMaterial({ color: '#140805' })), 0, -15, FLOOR + 2.1, 1.84)
+  for (const [dx, h, c] of [[-.9, 1.6, '#ff7a2a'], [0, 2.4, '#ffb04a'], [.8, 1.8, '#ff7a2a'], [-.2, 1.2, '#ffe08a']]) place(new THREE.Mesh(new THREE.ConeGeometry(.55, h, 8), new THREE.MeshBasicMaterial({ color: c })), 0, -15 + dx, FLOOR + .5 + h / 2, 2.1)
+  for (const dx of [-.8, .7]) place(new THREE.Mesh(new THREE.CylinderGeometry(.3, .3, 3.2, 8).rotateZ(Math.PI / 2), std({ color: '#2b1a0d' })), 0, -15 + dx * .3, FLOOR + .35, 2.1 + dx * .3)
+  fire = place(new THREE.PointLight('#ff7a2a', 170, 40), 0, -15, FLOOR + 2.5, 3.5)
+  for (const dx of [-3.2, 3]) { place(new THREE.Mesh(new THREE.CylinderGeometry(.14, .14, 1, 8), std({ color: '#f4efd8' })), 0, -15 + dx, FLOOR + 8.95, 1.2); place(new THREE.Mesh(new THREE.SphereGeometry(.12), glow), 0, -15 + dx, FLOOR + 9.55, 1.2) } // velas en la repisa
+  // vigas del techo
+  for (let z = -16; z <= 16; z += 8) { const beam = box(46, .7, .9, wood); beam.position.set(0, 11.65, z); scene.add(beam) }
+  // una silla por asiento
+  const cushion = std({ color: '#7a2f3a' })
+  for (let s = 0; s < 8; s++) {
+    const { a, x, z } = seatDir(s), ch = new THREE.Group(); ch.position.set(x * 10.9, 0, z * 10.9); ch.rotation.y = a
+    const part = (w, h, d, px, py, pz, mat = wood) => { const m = box(w, h, d, mat); m.position.set(px, py, pz); ch.add(m) }
+    part(2.4, .3, 2.3, 0, -2.6, 0); part(2.1, .16, 2, 0, -2.38, 0, cushion); part(2.4, 4.6, .3, 0, -.4, 1.15); part(1.8, 2.2, .1, 0, .2, .98, cushion)
+    for (const lx of [-1, 1]) for (const lz of [-1, 1]) part(.26, 3.4, .26, lx * 1.05, -4.3, lz * 1)
+    scene.add(ch)
+  }
+  // reloj de pared con la hora real, sobre la puerta
+  const clock = place(new THREE.Group(), 2, 15, 7.6, .2), hand = (w, l) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, l, .04).translate(0, l / 2, 0), std({ color: '#15171c' })); m.position.z = -.14; clock.add(m); return m }
+  clock.add(new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.25, .16, 40).rotateX(Math.PI / 2), wood), new THREE.Mesh(new THREE.CylinderGeometry(1.08, 1.08, .2, 40).rotateX(Math.PI / 2), std({ color: '#f4efd8' })))
+  for (let i = 0; i < 12; i++) { const tick = box(.06, i % 3 ? .12 : .24, .03, std({ color: '#15171c' })); tick.position.set(Math.sin(i * Math.PI / 6) * .9, Math.cos(i * Math.PI / 6) * .9, -.12); tick.rotation.z = -i * Math.PI / 6; clock.add(tick) }
+  clockH = hand(.1, .55); clockM = hand(.06, .85)
+  // adornos sobre los aparadores, entre las dos cajas
+  const prop = (m, wl, dx, y) => place(m, wl, dx, 3.05 + y, 1.5) // encima de la caja del medio
+  prop(new THREE.Mesh(new THREE.SphereGeometry(.8, 24, 16), std({ color: '#2f6b8a', roughness: .4 })), 0, 0, 1.3); prop(new THREE.Mesh(new THREE.CylinderGeometry(.12, .5, .5, 16), gold), 0, 0, .25) // globo
+  prop(new THREE.Mesh(new THREE.CylinderGeometry(.3, .5, 1.4, 16), std({ color: '#2f6b5c', roughness: .3 })), 1, 0, .7); for (const [dx, dy, c] of [[-.3, 0, '#e5484d'], [.25, .15, '#f5a524'], [0, .4, '#e93d82']]) prop(new THREE.Mesh(new THREE.SphereGeometry(.28, 12, 8), std({ color: c })), 1, dx, 1.7 + dy) // florero
+  ;[['#7a2f3a', 0], ['#1f3f7a', .22], ['#d9b26a', .44]].forEach(([c, y], i) => { const bk = box(1.5 - i * .15, .22, 1.1, std({ color: c })); prop(bk, 2, 0, .11 + y); bk.rotation.y += i * .3 }) // pila de libros
+  for (const dx of [-.5, 0, .5]) { const h = .6 + (dx ? 0 : .5); prop(new THREE.Mesh(new THREE.CylinderGeometry(.16, .16, h, 10), std({ color: '#f4efd8' })), 3, dx, h / 2); prop(new THREE.Mesh(new THREE.SphereGeometry(.1), glow), 3, dx, h + .12) } // velas
+  const shade = new THREE.Mesh(new THREE.ConeGeometry(2.4, 1.5, 32, 1, true), new THREE.MeshStandardMaterial({ color: '#1b1d22', side: THREE.DoubleSide })); shade.position.y = 10.2
+  const cord = new THREE.Mesh(new THREE.CylinderGeometry(.04, .04, 1.2), dark0()); cord.position.y = 11.4
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(.35), new THREE.MeshBasicMaterial({ color: '#ffe2b0' })); bulb.position.y = 9.8
+  const lamp = new THREE.PointLight('#ffd9a0', 500, 90); lamp.position.y = 9.4
+  scene.add(room, leg, rug, shade, cord, bulb, lamp)
+  for (let wl = 0; wl < 4; wl++) { const a = wl * Math.PI / 2, s = new THREE.Mesh(new THREE.BoxGeometry(16, 6.6, 2.6), wood); s.position.set(Math.sin(a) * 21.5, FLOOR + 3.3, Math.cos(a) * 21.5); s.rotation.y = a; scene.add(s) }
+  // repartidas por las 4 paredes; en cada aparador: abajo izquierda, derecha y centro, después arriba a los costados
+  const SLOT = [[-5.2, 0], [5.2, 0], [0, 0], [-5.2, 1], [5.2, 1]]
+  Object.keys(GAMES).forEach((key, i) => {
+    const a = (i % 4) * Math.PI / 2, sx = Math.sin(a), sz = Math.cos(a), [off, row] = SLOT[i >> 2], col = BOXC[i % BOXC.length]
+    const side = new THREE.MeshStandardMaterial({ color: col, transparent: true, roughness: .6 }), front = new THREE.MeshStandardMaterial({ map: tex(512, 244, () => {}), transparent: true, roughness: .6 })
+    front.map.image = cover(key, col); front.map.repeat.set(1, 1)
+    const b = new THREE.Mesh(new THREE.BoxGeometry(4.2, 2, 1.5), [side, side, side, side, side, front])
+    const lid = new THREE.Mesh(new THREE.BoxGeometry(4.32, .4, 1.62), side); lid.position.y = .9; b.add(lid) // tapa que sobresale
+    b.position.set(sx * 21.4 + sz * off, FLOOR + 7.6 + row * 2.15, sz * 21.4 - sx * off); b.rotation.y = a; b.userData.game = key; shelfBoxes.push(b); scene.add(b)
+  })
+}
+function dark0() { return new THREE.MeshStandardMaterial({ color: '#09090c' }) }
+
+// ---------- avatares: silueta larga, cabeza-pantalla, brazos ----------
+const avatars = new Map(), streams = new Map(), handT = new Map(), calls = new Set(), keys = new Set()
+let playerList = [], myId = null, peer = null, localStream = null
+let walkT = new Map(), walk = null // walkT: quién está de pie y dónde; walk: yo de pie {x,z,yaw,pitch}
+const EYE = 4.5
+const dark = new THREE.MeshStandardMaterial({ color: '#09090c', roughness: .9 })
+const UP = new THREE.Vector3(0, 1, 0), tmp = new THREE.Vector3(), elbow = new THREE.Vector3()
+function stretch(m, a, b) { m.position.copy(a).add(b).multiplyScalar(.5); tmp.copy(b).sub(a); m.scale.y = tmp.length(); m.quaternion.setFromUnitVectors(UP, tmp.normalize()) }
+function makeAvatar(p) {
+  const { a, x, z } = seatDir(p.seat), g = new THREE.Group(), col = COLORS[p.seat], armG = new THREE.Group()
+  const body = new THREE.Group(); body.position.set(x * 10.2, 0, z * 10.2); body.rotation.y = a; body.visible = p.id !== myId
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(.8, 8.5, 6, 16), dark); torso.position.y = -.95 // llega al piso
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(.18, .18, 1.4, 8), dark); neck.position.y = 4.5
+  const screenMat = new THREE.MeshBasicMaterial({ map: labelTex(p.name, '#22252e') })
+  const head = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.95, .25), [dark, dark, dark, dark, dark, screenMat]); head.position.y = 5.9
+  const plate = new THREE.Mesh(new THREE.PlaneGeometry(2.6, .4), new THREE.MeshBasicMaterial({ map: labelTex(p.name, col, 512, 80) })); plate.position.set(0, 4.65, -.3); plate.rotation.y = Math.PI
+  body.add(torso, neck, head, plate)
+  const zone = new THREE.Mesh(new THREE.PlaneGeometry(5, 2.3).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: .16, depthWrite: false }))
+  zone.position.set(x * 6.45, .012, z * 6.45); zone.rotation.y = a
+  g.add(body, zone, armG)
+  const arms = [1, -1].map(s => {
+    const seg = () => { const m = new THREE.Mesh(new THREE.CylinderGeometry(.11, .11, 1, 8), dark); m.castShadow = true; armG.add(m); return m }
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(.28, 16, 12), dark); hand.scale.y = .5; hand.castShadow = true; armG.add(hand)
+    const rest = new THREE.Vector3(x * 7.3 + s * 1.3 * z, .25, z * 7.3 - s * 1.3 * x)
+    return { s, sh: new THREE.Vector3(), rest, cur: rest.clone(), up: seg(), lo: seg(), hand }
+  })
+  scene.add(g)
+  return { g, body, armG, home: body.position.clone(), a, screenMat, arms, plate, cnt: 0 }
+}
+function setStream(id, s) {
+  streams.set(id, s); const av = avatars.get(id)
+  if (!av || id === myId || av.video?.srcObject === s) return
+  const v = document.createElement('video'); v.srcObject = s; v.playsInline = true; v.play().catch(() => {})
+  const t = new THREE.VideoTexture(v); t.colorSpace = THREE.SRGBColorSpace
+  av.video = v; av.screenMat.map = t; av.screenMat.needsUpdate = true
+}
+function setPlayers(list) {
+  playerList = list
+  for (const [id, av] of avatars) if (!list.some(p => p.id === id)) { scene.remove(av.g); av.video?.pause(); avatars.delete(id); calls.delete(id); streams.delete(id); handT.delete(id) }
+  for (const p of list) {
+    if (!avatars.has(p.id)) {
+      avatars.set(p.id, makeAvatar(p))
+      if (streams.has(p.id)) setStream(p.id, streams.get(p.id))
+      if (p.id === myId) { const { x, z } = seatDir(p.seat); camera.position.set(x * 15, 9, z * 15) }
+    }
+    // el de id menor llama, así cada par abre una sola llamada
+    if (p.id !== myId && myId < p.id && !calls.has(p.id) && peer?.open) { calls.add(p.id); peer.call(p.id, localStream).on('stream', s => setStream(p.id, s)) }
+  }
+}
+// Las cartas en la zona de otro jugador se ven siempre de dorso (mano privada).
+// shortcut: se decide en cada cliente, un cliente modificado podría espiar; mover al anfitrión si hace falta anti-trampa.
+function hiddenFrom(pos) {
+  for (const p of playerList) {
+    if (p.id === myId) continue
+    const { x, z } = seatDir(p.seat), al = pos.x * x + pos.z * z, sd = pos.x * z - pos.z * x
+    if (al > 5.3 && Math.abs(sd) < 2.5) return true
+  }
+  return false
+}
+
+// ---------- mensajes anfitrión → todos ----------
+function recv(m) {
+  if (m.t === 'init') { for (const [id, d] of m.texs) setTexData(id, d); m.objs.forEach(upsert); for (const [s, c] of m.ink || []) ribbon(felt, s, c) }
+  else if (m.t === 'unink') unink(felt)
+  else if (m.t === 'players') setPlayers(m.list)
+  else if (m.t === 'tex') setTexData(m.id, m.d)
+  else if (m.t === 'obj') upsert(m.d)
+  else if (m.t === 'draw') m.id === 'table' ? ribbon(felt, m.s, m.c) : view.get(m.id)?.mesh.userData.ink?.(m.s, m.c)
+  else if (m.t === 'fx') { shuffleFx(view.get(m.id)); riffle() }
+  else if (m.t === 'confetti') { confetti(m.p, m.d); popSnd() }
+  else if (m.t === 'log') addLog(m.s, m.c)
+  else if (m.t === 'ping') pingFx(m.p, m.c)
+  else if (m.t === 'flash') m.ids.forEach(flashObj)
+  else if (m.t === 'ink') { unink(felt); for (const [s, c] of m.ink) ribbon(felt, s, c) }
+  else if (m.t === 'del') { const v = view.get(m.id); if (v) { scene.remove(v.mesh); view.delete(m.id) } }
+  else if (m.t === 'st') {
+    for (const k of m.o) {
+      const v = view.get(k[0]); if (!v) continue
+      v.tp.set(k[1], k[2], k[3]); v.tq.set(k[4], k[5], k[6], k[7])
+      if (v.fresh) { v.mesh.position.copy(v.tp); v.mesh.quaternion.copy(v.tq); v.fresh = false }
+    }
+    for (const [id, p] of m.h) handT.set(id, p)
+    walkT = new Map(m.w)
+    for (const h of m.s || []) hitSound(...h)
+  }
+}
+
+// ---------- anfitrión: físicas y reglas de manipulación ----------
+let isHost = false, hostConn = null, nextId = 1, tableInk = []
+const conns = new Map(), players = new Map(), objs = new Map(), held = new Map(), hands = new Map()
+const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -40, 0) }); world.allowSleep = true
+world.solver.iterations = 20 // las pilas altas (torre de bloques) se desarman con menos
+const woodMat = new CANNON.Material('madera'), feltMat = new CANNON.Material('paño') // bloques y palitos: sin rebote, con agarre parejo
+world.addContactMaterial(new CANNON.ContactMaterial(woodMat, woodMat, { friction: .3, restitution: 0 }))
+world.addContactMaterial(new CANNON.ContactMaterial(woodMat, feltMat, { friction: .45, restitution: 0 }))
+world.defaultContactMaterial.friction = .4; world.defaultContactMaterial.restitution = .25
+const ground = new CANNON.Body({ mass: 0, shape: new CANNON.Plane(), material: feltMat }); ground.quaternion.setFromEuler(-Math.PI / 2, 0, 0); world.addBody(ground)
+const AX = new CANNON.Vec3(1, 0, 0), AY = new CANNON.Vec3(0, 1, 0), qY = new CANNON.Quaternion(), qX = new CANNON.Quaternion()
+
+function broadcast(m) { recv(m); for (const c of conns.values()) if (c.open) c.send(m) }
+const CUP = [[-.31, -.4, -.31], [.31, -.4, -.31], [-.31, -.4, .31], [.31, -.4, .31], [0, .22, 0]] // lugares de los 5 dados dentro del cubilete
+const HALF = { gun: [.6, .3, .12], die: [.3, .3, .3], bag: [.7, .25, .7], cup: [.95, .75, .95], pin: [.2, .55, .2], stick: [.06, .03, 1.5], standee: [.45, .65, .25], paper: [1.05, .01, 1.485], rack: [2.16, 1.6, .2], block: [.25, .15, .75] }
+const QV = new CANNON.Quaternion().setFromAxisAngle(AX, Math.PI / 2), walks = new Map(), vortex = new Map(), fP = new CANNON.Vec3(); let restTick = 0 // QV: ficha parada de canto; vortex: juego → segundos de remolino que le quedan
+const half = o => o.kind === 'deck' ? (([w, l]) => [w / 2, thick(o.cards.length) / 2, l / 2])(cardDims(o.cards.at(-1)[2] ?? STD_AR)) : o.kind === 'token' ? [.25, (PIECE_H[o.tex[7]] || .75) / 2, .25] : o.kind === 'board' ? [o.w / 2, .06, o.l / 2] : o.kind === 'disc' ? [o.r, o.h / 2, o.r] : o.kind === 'die' && o.sides ? [DIE_R[o.sides], DIE_R[o.sides], DIE_R[o.sides]] : o.kind === 'block' ? [.25, o.th || .15, .75] : o.kind === 'ball' ? [o.r, o.r, o.r] : o.kind === 'pawn' ? [.3, .6, .3].map(n => n * (o.s || 1)) : o.kind === 'tile' ? tileSize(o.face).map(n => n / 2) : HALF[o.kind]
+const flips = o => o.kind === 'deck' || o.kind === 'tile' || !!o.color2 || !!o.coin
+const GRID = { chess: [.75, 8], damas: [.75, 8], reversi: [.75, 8], go: [.5, 13] } // encastre: paso y cantidad de casillas por lado
+const desc = o => ({ ar: o.cards?.at(-1)[2] ?? null, id: o.id, kind: o.kind, set: o.set ?? null, n: o.cards?.length ?? 0, face: o.cards ? o.cards.at(-1)[0] : o.face ?? null, back: o.cards ? o.cards[0][1] : o.back ?? null, color: o.color ?? null, tex: o.tex ?? null, strokes: o.strokes ?? null, r: o.r ?? null, h: o.h ?? null, sides: o.sides ?? null, th: o.th ?? null, w: o.w ?? null, l: o.l ?? null, locked: !!o.locked, c2: o.color2 ?? null, s: o.s ?? null })
+const faceUp = o => o.body.quaternion.vmult(AY).y > 0
+function makeBody(o, pos, quat) {
+  if (o.body) world.removeBody(o.body)
+  const b = new CANNON.Body({ mass: o.locked ? 0 : o.kind === 'deck' ? .2 + .01 * o.cards.length : o.kind === 'board' || o.kind === 'rack' ? 1 : o.kind === 'stick' ? .12 : .4, shape: o.kind === 'die' && o.sides ? dieShape(o.sides) : o.kind === 'ball' ? new CANNON.Sphere(o.r) : new CANNON.Box(new CANNON.Vec3(...half(o))), sleepSpeedLimit: .3, sleepTimeLimit: .5, angularDamping: .1 })
+  if (o.kind === 'rack') b.collisionFilterGroup = 2
+  if (o.c4) b.collisionFilterMask = 1 // las fichas del 4 en línea atraviesan su rejilla; por dentro las guía step()
+  if (o.hand) b.collisionFilterMask = 0
+  b.position.copy(pos); if (quat) b.quaternion.copy(quat)
+  if (o.kind === 'block' || o.kind === 'stick') { b.material = woodMat; b.sleepSpeedLimit = .75 } // un vecino dormido se despierta sólo si lo tocan a más de ~1 m/s: con cuidado no se perturba
+  if (o.kind === 'stick') { b.linearDamping = .3; b.angularDamping = .8 } // chatos y amortiguados: con sección cuadrada rodaban sobre sí mismos sin parar
+  b.addEventListener('collide', e => hit(o, e))
+  world.addBody(b); o.body = b; o.last = ''
+}
+// abanico: cartas sueltas con o.hand = dueño, ordenadas por o.ord; no chocan con nada, las acomoda step()
+function setHand(o, pid) { o.hand = pid; o.body.collisionFilterMask = pid ? 0 : -1 }
+const fanOf = pid => [...objs.values()].filter(o => o.hand === pid && !o.held).sort((a, b) => a.ord - b.ord)
+const inZone = (seat, p) => { const { x, z } = seatDir(seat); return p.x * x + p.z * z > 5.3 && Math.abs(p.x * z - p.z * x) < 2.5 }
+function add(o, pos) { o.id = nextId++; objs.set(o.id, o); makeBody(o, new CANNON.Vec3(...pos)); broadcast({ t: 'obj', d: desc(o) }); return o }
+function rebuild(o) { makeBody(o, o.body.position, o.body.quaternion); broadcast({ t: 'obj', d: desc(o) }) }
+function remove(o) { world.removeBody(o.body); objs.delete(o.id); if (o.held) held.delete(o.held); broadcast({ t: 'del', id: o.id }) }
+function readOrient(o) { const ax = o.body.quaternion.vmult(AX); o.yaw = Math.atan2(-ax.z, ax.x); o.flip = flips(o) && !faceUp(o) }
+function setOrient(o) { qY.setFromAxisAngle(AY, o.yaw); qX.setFromAxisAngle(AX, o.flip ? Math.PI : 0); qY.mult(qX, o.body.quaternion); o.body.wakeUp(); o.body.aabbNeedsUpdate = true }
+// registro de jugadas: lo ven todos, con el color del jugador
+function log(pid, text) { const pl = players.get(pid); if (pl && text) broadcast({ t: 'log', s: `${pl.name} ${text}`, c: COLORS[pl.seat] }) }
+// resultado de dados y monedas: se anota cuando todo lo que tiró un jugador se quedó quieto
+const rolls = new Map(), qc = new CANNON.Quaternion(), upL = new CANNON.Vec3()
+function rolled(o, pid) { let r = rolls.get(pid); if (!r) rolls.set(pid, r = { dice: new Set() }); r.dice.add(o); r.t = performance.now() }
+function localUp(o) { o.body.quaternion.conjugate(qc); return qc.vmult(AY, upL) }
+function dieValue(o) {
+  const u = localUp(o)
+  if (!o.sides) { const a = [u.x, -u.x, u.y, -u.y, u.z, -u.z]; return [3, 4, 1, 6, 2, 5][a.indexOf(Math.max(...a))] } // mismo orden que las caras del cubo
+  const M = dieModel(o.sides), best = (list, f) => list.reduce((b, q, i) => (f(q) > f(list[b]) ? i : b), 0)
+  return o.sides === 4 ? best(M.verts, q => q.x * u.x + q.y * u.y + q.z * u.z) + 1 : M.vals[best(M.faces, f => f.n.x * u.x + f.n.y * u.y + f.n.z * u.z)]
+}
+const coinFace = c => localUp(c).y > 0 ? 'cara' : 'ceca'
+function settleRolls() {
+  const now = performance.now()
+  for (const [pid, r] of rolls) {
+    if (now - r.t < 500) continue
+    const ds = [...r.dice].filter(d => objs.has(d.id)), still = d => !d.held && !d.inCup && d.body.velocity.lengthSquared() < .02 && d.body.angularVelocity.lengthSquared() < .05
+    if (now - r.t < 8000 && !ds.every(still)) continue
+    rolls.delete(pid)
+    const dice = ds.filter(d => d.kind === 'die' && !d.inCup), coins = ds.filter(d => d.coin), parts = []
+    if (dice.length) {
+      const vals = dice.map(d => [d.sides || 6, dieValue(d)]), same = vals.every(v => v[0] === vals[0][0]), sum = vals.reduce((t, v) => t + v[1], 0)
+      parts.push(same ? `sacó ${vals.map(v => v[1]).join(' + ')}${vals.length > 1 ? ' = ' + sum : ''}${vals[0][0] !== 6 ? ` (d${vals[0][0]})` : ''}` : `sacó ${vals.map(v => `d${v[0]}: ${v[1]}`).join(' · ')} (total ${sum})`)
+    }
+    if (coins.length) parts.push(`tiró la moneda: ${coins.map(coinFace).join(', ')}`)
+    log(pid, parts.join(' y '))
+  }
+}
+// juez de palitos chinos y de la torre: ¿se movió algo más que lo que agarraste?
+function watchSet(o) { o.watch = new Map([...objs.values()].filter(t => t.set === o.set && t !== o).map(t => [t.id, t.body.position.clone()])); o.start = o.body.position.clone(); o.maxY0 = Math.max(...[...o.watch.values()].map(q => q.y)) }
+function judge(pid, o, w, start, maxY0, set) {
+  const moved = [...w].filter(([id, q]) => { const t = objs.get(id); return t && !t.held && t.body.position.distanceTo(q) > (set === 'mikado' ? .06 : .1) }).map(([id]) => id)
+  if (moved.length) broadcast({ t: 'flash', ids: moved })
+  if (set === 'tower') { const ys = [...objs.values()].filter(t => t.set === 'tower' && t !== o).map(t => t.body.position.y); if (ys.length && Math.max(...ys) < maxY0 * .6) log(pid, '¡derrumbó la torre!') }
+  else if (moved.length) log(pid, `movió ${moved.length} palito${moved.length > 1 ? 's' : ''}`)
+  else if (objs.has(o.id) && o.body.position.distanceTo(start) > .8) log(pid, 'sacó un palito sin mover ninguno')
+}
+// sonido de los choques: el anfitrión junta los golpes fuertes y los manda con cada actualización
+const hits = []
+const sndKind = o => o.kind === 'ball' && o.r < .2 ? 'glass' : ({ deck: 'card', paper: 'card', standee: 'card', die: 'dice', disc: 'chip', tile: 'tile', ball: 'ball', gun: 'plastic', rack: 'plastic' })[o.kind] || 'wood'
+function hit(o, e) {
+  if (hits.length > 8) return
+  const v = Math.abs(e.contact.getImpactVelocityAlongNormal()), now = performance.now(); if (v < 1.2 || now - (o.hitT || 0) < 70) return
+  o.hitT = now; const p = o.body.position; hits.push([sndKind(o), Math.min(1, v / 10), r3(p.x), r3(p.y), r3(p.z)])
+}
+const sendPlayers = () => broadcast({ t: 'players', list: [...players.values()] })
+
+// saca del mazo la parte de arriba (entre 30% y 70%, como un corte a mano) y la devuelve en el mismo orden
+function cutTop(o) { const n = o.cards.length, k = Math.max(1, Math.min(n - 1, Math.round(n * (.3 + .4 * Math.random())))); return faceUp(o) ? o.cards.splice(n - k) : o.cards.splice(0, k) }
+const stdCards = () => [...'♠♥♦♣'].flatMap(s => RANKS.map(r => ['std:' + r + s, 'std:back']))
+function spawnSet(key, x, z, a) { // x,z,a: asiento de quien lo pidió
+  const put = (o, pos, yaw = 0, flip = false) => { o.set = key; add(o, pos); o.yaw = yaw; o.flip = flip; setOrient(o) }
+  const near = (i, y) => [x * 4.4 + z * i, y, z * 4.4 - x * i] // frente al jugador, i = corrimiento lateral
+  const disc = (color, r, h) => ({ kind: 'disc', color, r, h })
+  if (key === 'chess' || key === 'damas') put({ kind: 'board', tex: 'chess:board', w: 6.4, l: 6.4, locked: true }, [0, .06, 0]) // tableros nacen bloqueados: arrastrar piezas encima no los corre
+  if (key === 'chess') { // blancas del lado del asiento 0
+    for (const [col, side, yaw] of [['w', 1, 0], ['b', -1, Math.PI]]) for (let i = 0; i < 8; i++) for (const [g, row] of [['♜♞♝♛♚♝♞♜'[i], 3.5], ['♟', 2.5]])
+      put({ kind: 'token', tex: 'chess:' + col + g }, [(i - 3.5) * .75, .15 + PIECE_H[g] / 2, side * row * .75], yaw)
+  }
+  else if (key === 'damas') { for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) if ((r + c) % 2 && r !== 3 && r !== 4) put(disc(r < 3 ? '#1c1a19' : '#b3202a', .3, .12), [(c - 3.5) * .75, .25, (r - 3.5) * .75]) }
+  else if (key === 'c4') {
+    put({ kind: 'rack', locked: true }, [0, 1.6, 0], a) // rejilla parada, de frente a quien la pidió; nace bloqueada
+    for (let i = 0; i < 2; i++) for (let p = 0; p < 3; p++) for (let l = 0; l < 7; l++) { // fichas tendidas a los costados
+      const lat = (i ? 1 : -1) * (2.8 + p * .58), fwd = 2 + (l - 3) * .56
+      put({ ...disc(i ? '#f2c230' : '#d92b2b', .25, .12), c4: true }, [x * fwd + z * lat, .1, z * fwd - x * lat])
+    }
+  }
+  else if (key === 'mahjong') shuffle(mahjongSet()).forEach((f, k) => { const c = k >> 1; put({ kind: 'tile', face: f, back: 'mj:back' }, [(c % 12 - 5.5) * .55, .2 + (k % 2) * .36, ((c / 12 | 0) - 2.5) * .72], 0, true) }) // muro de 2 pisos
+  else if (key === 'domino') shuffle(dominoSet()).forEach((f, k) => put({ kind: 'tile', face: f, back: 'dom:back' }, [(k % 7 - 3) * .6, .2, ((k / 7 | 0) - 1.5) * 1.1], 0, true))
+  else if (key === 'esp') put({ kind: 'deck', cards: [...'oceb'].flatMap(p => Array.from({ length: 12 }, (_, i) => ['esp:' + (i + 1) + p, 'esp:back'])) }, near(0, 1), a, true)
+  else if (key === 'poker') {
+    put({ kind: 'deck', cards: stdCards() }, near(-3.6, 1), a, true);
+    // pilas bajas (5) y apoyadas justas: las de 10 se desmoronaban
+    ['#f1efe8', '#c8102e', '#1f4fa8', '#1f7a3d', '#15171c'].forEach((c, i) => { for (let l = 0; l < 10; l++) put(disc(c, .28, .08), near(-2.8 + (i * 2 + (l / 5 | 0)) * .62, .04 + l % 5 * .08)) })
+  }
+  else if (key === 'dados') { // generala: cubilete con los 5 dados adentro y planilla
+    const cup = { kind: 'cup' }; put(cup, near(0, .8), a)
+    for (let i = 0; i < 5; i++) { const d = { kind: 'die' }; put(d, near(0, 1)); d.inCup = cup.id; d.cupSlot = i; d.body.collisionFilterMask = 0 }
+    put({ kind: 'paper', strokes: [], tex: 'sheet:generala' }, near(2.8, .5), a)
+  }
+  // --- los que siguen se arman girados hacia quien los pidió: rel() son coordenadas del tablero ---
+  const cs = Math.cos(a), sn = Math.sin(a), rel = (lx, y, lz) => [lx * cs + lz * sn, y, -lx * sn + lz * cs]
+  const bag = (lx, lz, give) => put({ kind: 'bag', color: give.color, give }, rel(lx, .3, lz), a)
+  const board = (tex, w, l) => put({ kind: 'board', tex, w, l, locked: true }, [0, .06, 0], a)
+  if (key === 'backgammon') {
+    board('bg:board', 8.4, 6.4)
+    const stack = (n, cnt, col) => { const k = n <= 12 ? n - 1 : 24 - n, sd = n <= 12 ? 1 : -1; for (let j = 0; j < cnt; j++) put(disc(col, .27, .1), rel(bgX(k), .25, sd * (2.72 - j * .56))) }
+    for (const [n, c] of [[24, 2], [13, 5], [8, 3], [6, 5]]) { stack(n, c, '#efe6d2'); stack(25 - n, c, '#3a1f1a') }
+    for (const i of [-.5, .5]) put({ kind: 'die' }, near(i, 1))
+  }
+  else if (key === 'truco') {
+    put({ kind: 'deck', cards: [...'oceb'].flatMap(p => [1, 2, 3, 4, 5, 6, 7, 10, 11, 12].map(n => ['esp:' + n + p, 'esp:back'])) }, near(0, 1), a, true)
+    put({ kind: 'bag', color: '#c9a26b', give: disc('#c9a26b', .12, .1) }, near(1.9, .3), a) // porotos
+  }
+  else if (key === 'go') { board('go:board', 6.6, 6.6); bag(-4.3, 1.5, disc('#15171c', .22, .1)); bag(4.3, 1.5, disc('#f4f1ea', .22, .1)) }
+  else if (key === 'reversi') {
+    const two = { ...disc('#15171c', .3, .1), color2: '#f4f1ea' }
+    board('rev:board', 6.4, 6.4); bag(4.3, 1.5, two)
+    for (const [c, r] of [[3, 3], [4, 4], [3, 4], [4, 3]]) put({ ...two }, rel((c - 3.5) * .75, .25, (r - 3.5) * .75), a, c === r)
+  }
+  else if (key === 'ludo') {
+    board('ludo:board', 7.5, 7.5); put({ kind: 'die' }, near(0, 1))
+    ;[[0, 0, '#e5484d'], [9, 0, '#46a758'], [9, 9, '#f5a524'], [0, 9, '#3e8ed0']].forEach(([c, r, color]) => { for (const dc of [2, 4]) for (const dr of [2, 4]) put({ kind: 'pawn', color, s: .7 }, rel((c + dc - 7.5) * .5, .6, (r + dr - 7.5) * .5)) })
+  }
+  else if (key === 'oca') {
+    board('oca:board', 7.2, 6.4); for (const i of [-.5, .5]) put({ kind: 'die' }, near(i, 1))
+    ;['#e5484d', '#3e8ed0', '#46a758', '#f5a524'].forEach((color, i) => put({ kind: 'pawn', color, s: .6 }, rel(-3.2 + (i % 2 ? .2 : -.2), .6, 2.8 + (i < 2 ? .2 : -.2))))
+  }
+  else if (key === 'mancala') {
+    board('man:board', 8, 3)
+    for (const sd of [1, -1]) for (let c = 0; c < 6; c++) for (let k = 0; k < 4; k++) put(disc(['#c9a26b', '#8a5a2f', '#e9dcc0', '#5d3c25'][(c + k) % 4], .1, .08), rel(-2.5 + c + (k % 2 ? .13 : -.13), .25, sd * .65 + (k < 2 ? .13 : -.13)))
+  }
+  else if (key === 'mikado') { // nacen ya desparramados y encimados, como quedan al soltar el manojo
+    // (soltarlos parados no sirve: se apoyan entre sí y el manojo queda en pie)
+    [...Array(15).fill('#f2c230'), ...Array(5).fill('#d92b2b'), ...Array(5).fill('#1f4fa8'), ...Array(5).fill('#1f7a3d'), '#15171c'].forEach((color, i) => {
+      const s = add({ kind: 'stick', color, set: key }, [rnd(1.6), .05 + i * .075, rnd(1.6)]); s.body.quaternion.setFromEuler(0, rnd(6.3), 0) // planos y sin tocarse: encimados de entrada se atravesaban y la pila nunca se calmaba
+    })
+  }
+  else if (key === 'tower') spawnTower(x, z, a)
+  else if (key === 'tarot') put({ kind: 'deck', cards: Array.from({ length: 78 }, (_, i) => ['tarot:' + i, 'tarot:back']) }, near(0, 1), a, true)
+  else if (key === 'bowling') {
+    for (let r = 0; r < 4; r++) for (let i = 0; i <= r; i++) put({ kind: 'pin' }, rel((i - r / 2) * .75, .6, -1 - r * .7))
+    put({ kind: 'ball', r: .45, color: '#1f3f7a' }, near(0, .6))
+  }
+}
+function spawnTower(x, z, a) { // 12 pisos de 3 bloques, cruzados piso por medio
+  for (let lv = 0; lv < 12; lv++) for (let k = -1; k < 2; k++) {
+    // como en el juego real, algunos bloques son un pelo más finos (quedan flojos) y hay una holgura mínima entre vecinos
+    const th = a + lv % 2 * Math.PI / 2, ht = Math.random() < .35 ? .141 + Math.random() * .004 : .15, b = add({ kind: 'block', set: 'tower', th: ht }, [x * 4.4 + k * .515 * Math.cos(th), lv * .3 + ht, z * 4.4 - k * .515 * Math.sin(th)])
+    b.yaw = th; b.flip = false; setOrient(b); b.body.sleep() // nace dormida: se despierta recién cuando la tocan
+  }
+}
+function handle(m, pid) { // m viene de la red: validar todo
+  const pl = players.get(pid); if (!pl || !m) return
+  if (m.t === 'ptr') { if (Array.isArray(m.p) && m.p.length === 3 && m.p.every(Number.isFinite)) hands.set(pid, m.p) }
+  else if (m.t === 'grab') {
+    let o = objs.get(m.id); if (!o || o.held || held.has(pid)) return
+    if (o.kind === 'bag' && !m.whole) { // el cuenco no se agota: arrastrar saca una ficha nueva (Shift mueve el cuenco)
+      if (objs.size >= 700) return
+      const p = o.body.position; o = add({ ...o.give, set: o.set }, [p.x, p.y + .7, p.z])
+    } else if (o.locked) return
+    if (o.hand) setHand(o, null)
+    if (o.inCup) { o.inCup = null; o.body.collisionFilterMask = -1 }
+    if (o.slot) o.body.collisionFilterMask = 1
+    o.slot = o.snap = null
+    if (o.kind === 'deck' && o.cards.length > 1 && !m.whole) { // arrastrar un mazo saca la carta de arriba; con Ctrl, un corte
+      const p = o.body.position, top = p.y + thick(o.cards.length) / 2 + .05, q = o.body.quaternion.clone()
+      const cs = m.cut ? cutTop(o) : [faceUp(o) ? o.cards.pop() : o.cards.shift()]; rebuild(o)
+      o = add({ kind: 'deck', cards: cs, set: o.set }, [p.x, top + thick(cs.length) / 2, p.z]); o.body.quaternion.copy(q)
+    }
+    readOrient(o); o.held = pid; held.set(pid, o); o.prec = !!m.prec; if (o.set === 'mikado' || o.set === 'tower') watchSet(o) // precisión: no se levanta, va lento y con poca fuerza
+    if (o.kind === 'die' && !o.prec) o.body.angularVelocity.set(rnd(30), rnd(30), rnd(30)) // gira en la mano: soltarlo es tirarlo
+  }
+  else if (m.t === 'drop') {
+    const o = held.get(pid); if (!o) return
+    held.delete(pid); o.held = null; o.prec = false
+    if (o.watch) { const args = [pid, o, o.watch, o.start, o.maxY0, o.set]; o.watch = null; setTimeout(() => judge(...args), 1500) } // se juzga cuando todo se asentó
+    const board = !m.free && GRID[o.set] && [...objs.values()].find(t => t.kind === 'board' && t.set === o.set)
+    if (board && o.kind !== 'board') { // pieza soltada sobre su tablero: encastra en la casilla (o intersección) más cercana
+      // se decide por dónde está la mano (igual que el aro que ve el jugador), no por la pieza, que viene un poco atrasada
+      const [step, n] = GRID[o.set], p = o.body.position, hp = hands.get(pid) ?? [p.x, 0, p.z], l = board.body.pointToLocalFrame(new CANNON.Vec3(hp[0], p.y, hp[2])), off = (n - 1) / 2 * step
+      if (Math.abs(l.x) < board.w / 2 && Math.abs(l.z) < board.l / 2) {
+        const sn = v => (Math.max(0, Math.min(n - 1, Math.round(v / step + (n - 1) / 2))) * step) - off
+        // se apoya parada sobre la casilla: soltada desde la altura de la mano, una pieza alta se volcaba
+        const w = board.body.pointToWorldFrame(new CANNON.Vec3(sn(l.x), .06 + half(o)[1] + .01, sn(l.z))); p.copy(w)
+        o.body.velocity.setZero(); o.body.angularVelocity.setZero(); setOrient(o)
+      }
+    }
+    if (o.kind === 'die') { // dado soltado sobre el cubilete: queda adentro
+      const near = c => Math.hypot(c.body.position.x - o.body.position.x, c.body.position.z - o.body.position.z) < .9
+      const cup = [...objs.values()].find(c => c.kind === 'cup' && !c.held && near(c)); if (!cup) return rolled(o, pid) // soltarlo es tirarlo
+      const used = [...objs.values()].filter(d => d.inCup === cup.id).map(d => d.cupSlot), free = [0, 1, 2, 3, 4].find(i => !used.includes(i))
+      if (free !== undefined) { o.inCup = cup.id; o.cupSlot = free; o.body.collisionFilterMask = 0 }
+      return
+    }
+    const p = o.body.position
+    if ((o.kind === 'tile' || o.kind === 'deck' && o.cards.length === 1) && inZone(pl.seat, p)) { // carta o ficha suelta en mi zona: entra a mi mano donde la solté
+      const { x, z } = seatDir(pl.seat), lat = f => f.body.position.x * z - f.body.position.z * x, fan = fanOf(pid).filter(f => f.kind === o.kind), k = fan.findIndex(f => lat(f) > lat(o))
+      o.ord = k < 0 ? (fan.at(-1)?.ord ?? 0) + 1 : ((fan[k - 1]?.ord ?? fan[k].ord - 1) + fan[k].ord) / 2
+      return setHand(o, pid)
+    }
+    if (o.kind !== 'deck') { o.slot = o.snap; o.snap = null; if (o.slot) o.body.collisionFilterMask = 0; return } // ficha soltada sobre la rejilla: cae por su columna
+    let best = null, bd = .45
+    for (const t of objs.values()) if (t !== o && t.kind === 'deck' && !t.held && !t.hand) { const d = Math.hypot(t.body.position.x - o.body.position.x, t.body.position.z - o.body.position.z); if (d < bd) { bd = d; best = t } }
+    if (best) { best.cards = mergeCards(best.cards, faceUp(best), o.cards, faceUp(o)); remove(o); rebuild(best) }
+  }
+  else if (m.t === 'act') {
+    if (m.a === 'erase' && m.id === 'table' && !held.has(pid)) { tableInk = []; broadcast({ t: 'unink' }); return }
+    const o = held.get(pid) ?? objs.get(m.id); if (!o || (o.held && o.held !== pid)) return
+    if (m.a === 'lock') { if (!o.held && !o.hand) { o.locked = !o.locked; rebuild(o) } return }
+    if (m.a === 'erase') { if (o.strokes?.length) { o.strokes = []; broadcast({ t: 'obj', d: desc(o) }) } return }
+    if (o.kind === 'rack' && m.a === 'roll') { // vaciar la rejilla
+      for (const d of objs.values()) if (d.slot?.rack === o.id) { d.slot = null; d.body.collisionFilterMask = 1; d.body.wakeUp(); d.body.velocity.set(rnd(2), 2, rnd(6)) }
+      return
+    }
+    if (o.locked) return
+    if (m.a === 'del') remove(o)
+    else if (m.a === 'fan') {
+      if (o.kind !== 'deck') return
+      const { a, x, z } = seatDir(pl.seat)
+      if (o.hand === pid) { // juntar mi abanico en un mazo boca abajo
+        const fan = fanOf(pid).filter(f => f.kind === 'deck'), d = add({ kind: 'deck', cards: fan.map(f => f.cards[0]), set: o.set }, [x * 4.6, 1, z * 4.6])
+        d.yaw = a; d.flip = true; setOrient(d); fan.forEach(remove)
+      } else if (!o.hand && o.cards.length <= 40 && objs.size + o.cards.length < 700) { // desplegar el mazo en mi abanico
+        const base = (fanOf(pid).at(-1)?.ord ?? 0) + 1, p = o.body.position
+        o.cards.forEach((c, i) => { const n = add({ kind: 'deck', cards: [c], set: o.set }, [p.x, p.y + .3, p.z]); n.ord = base + i; setHand(n, pid) })
+        remove(o)
+      }
+    }
+    else if (m.a === 'rollall') { // tirar todos los dados sueltos de la mesa a la vez
+      for (const d of objs.values()) if (d.kind === 'die' && !d.held && !d.inCup && !d.locked && !d.hand) { rolled(d, pid); d.body.wakeUp(); d.body.velocity.set(rnd(4), 13, rnd(4)); d.body.angularVelocity.set(rnd(40), rnd(40), rnd(40)) }
+    }
+    else if (m.a === 'draw') { // robar: la carta de arriba pasa a mi abanico
+      if (o.kind !== 'deck' || o.hand || o.held) return
+      const ord = (fanOf(pid).at(-1)?.ord ?? 0) + 1
+      if (o.cards.length === 1) { o.ord = ord; return setHand(o, pid) }
+      const p = o.body.position, c = faceUp(o) ? o.cards.pop() : o.cards.shift(); rebuild(o)
+      const n = add({ kind: 'deck', cards: [c], set: o.set }, [p.x, p.y + .3, p.z]); n.ord = ord; setHand(n, pid)
+    }
+    else if (m.a === 'cut' || m.a === 'cutc') { // cortar: la parte de arriba al costado; completar: la de arriba pasa abajo
+      if (o.kind !== 'deck' || o.cards.length < 2 || o.hand || o.held) return
+      const up = faceUp(o), top = cutTop(o); log(pid, m.a === 'cutc' ? 'cortó y completó el mazo' : 'cortó el mazo')
+      if (m.a === 'cutc') { o.cards = up ? [...top, ...o.cards] : [...o.cards, ...top]; rebuild(o); broadcast({ t: 'fx', id: o.id }); return }
+      const { x, z } = seatDir(pl.seat), p = o.body.position, q = o.body.quaternion.clone(); rebuild(o)
+      const n = add({ kind: 'deck', cards: top, set: o.set }, [p.x + z * 1.4, p.y + .4, p.z - x * 1.4]); n.body.quaternion.copy(q) // a la derecha de quien corta
+    }
+    else if (o.hand) return // en el abanico no se voltea ni se gira
+    else if (m.a === 'roll') {
+      if (o.kind === 'die' && !o.held) { rolled(o, pid); o.body.wakeUp(); o.body.velocity.set(rnd(4), 13, rnd(4)); o.body.angularVelocity.set(rnd(40), rnd(40), rnd(40)) }
+      else if (o.kind === 'deck' && o.cards.length > 1) {
+        shuffle(o.cards); log(pid, 'mezcló el mazo')
+        rebuild(o); broadcast({ t: 'fx', id: o.id }) // los clientes muestran el mazo cortándose y entreverándose
+      }
+      else if (o.kind === 'tile') { // remolino: todas las fichas del juego giran boca abajo y se entreveran
+        const ts = [...objs.values()].filter(t => t.kind === 'tile' && t.set === o.set && !t.held && !t.locked && !t.hand), r0 = Math.sqrt(ts.length) * .36 // las de las manos no entran al remolino
+        for (const t of ts) { readOrient(t); t.vr = r0 * (.25 + .75 * Math.random()) }
+        vortex.set(o.set, 2.5); log(pid, 'mezcló las fichas')
+      }
+      else if (o.kind === 'cup') { // volcar el cubilete: los dados salen disparados hacia el centro de la mesa
+        const p = o.body.position, r = Math.hypot(p.x, p.z) || 1
+        for (const d of objs.values()) if (d.inCup === o.id) {
+          d.inCup = null; rolled(d, pid); const b = d.body; b.collisionFilterMask = -1; b.wakeUp(); b.position.set(p.x + rnd(.6), p.y + 1 + d.cupSlot * .35, p.z + rnd(.6))
+          b.velocity.set(-p.x / r * 6 + rnd(4), 5, -p.z / r * 6 + rnd(4)); b.angularVelocity.set(rnd(40), rnd(40), rnd(40))
+        }
+      }
+      else if (o.kind === 'gun') { // dispara confeti por el caño; suelta en la mesa, patea para atrás
+        const now = performance.now(); if (now - (o.shot || 0) < 300) return; o.shot = now
+        const b = o.body, mz = b.pointToWorldFrame(new CANNON.Vec3(.75, .12, 0)), dir = b.quaternion.vmult(new CANNON.Vec3(1, .35, 0))
+        broadcast({ t: 'confetti', p: [mz.x, mz.y, mz.z].map(r3), d: [dir.x, dir.y, dir.z].map(r3) })
+        if (!o.held) { b.wakeUp(); b.velocity.set(-dir.x * 2.5, 1.5, -dir.z * 2.5); b.angularVelocity.set(0, 0, rnd(4)) }
+      }
+      else if (o.coin && !o.held) { rolled(o, pid); o.body.wakeUp(); o.body.velocity.set(rnd(2), 11, rnd(2)); o.body.angularVelocity.set(22 + rnd(8), rnd(3), rnd(3)) } // tirar la moneda
+      else if (o.kind === 'paper') { o.strokes = []; broadcast({ t: 'obj', d: desc(o) }) } // hoja en blanco
+    }
+    else if (o.kind !== 'die' && ['flip', 'rotL', 'rotR'].includes(m.a)) {
+      if (!o.held) readOrient(o)
+      if (m.a === 'flip') o.flip = flips(o) && !o.flip; else o.yaw += (m.a === 'rotL' ? 1 : -1) * (m.fine ? Math.PI / 12 : Math.PI / 4) // fine: la rueda gira de a 15°
+      setOrient(o)
+    }
+  }
+  else if (m.t === 'tex') {
+    if (typeof m.id === 'string' && m.id.length < 20 && !m.id.includes(':') && typeof m.d === 'string' && m.d.startsWith('data:image/') && m.d.length < 2e6 && texData.size < 2000) broadcast({ t: 'tex', id: m.id, d: m.d })
+  }
+  else if (m.t === 'draw') {
+    if (!/^#[0-9a-f]{6}$/i.test(m.c) || !Array.isArray(m.s)) return
+    const ok = (len, lo, hi) => m.s.length === len && m.s.every(n => Number.isFinite(n) && n >= lo && n <= hi)
+    if (m.id === 'table') { if (ok(9, -12, 12) && tableInk.length < INK_MAX) { tableInk.push([m.s, m.c]); broadcast({ t: 'draw', id: 'table', s: m.s, c: m.c }) } return }
+    const o = objs.get(m.id); if (!o) return
+    const paper = o.kind === 'paper'; if (!(paper ? ok(4, 0, 1) : ok(9, -12, 12))) return
+    o.strokes ??= []; if (o.strokes.length >= (paper ? 20000 : INK_MAX)) return
+    o.strokes.push([m.s, m.c]); broadcast({ t: 'draw', id: o.id, s: m.s, c: m.c })
+  }
+  else if (m.t === 'walk') { if (Array.isArray(m.w) && m.w.length === 3 && m.w.every(Number.isFinite)) walks.set(pid, m.w); else walks.delete(pid) }
+  else if (m.t === 'reset') { // volver un juego a su armado inicial: se guarda y se vuelve a sacar
+    const had = [...objs.values()].filter(o => o.set && o.set === m.set); if (!had.length) return
+    had.forEach(remove); vortex.delete(m.set); log(pid, 'reinició ' + (GAMES[m.set] || 'la torre'))
+    const { a, x, z } = seatDir(pl.seat); Object.hasOwn(GAMES, m.set) ? spawnSet(m.set, x, z, a) : m.set === 'tower' && spawnTower(x, z, a)
+  }
+  else if (m.t === 'clear') { log(pid, 'vació la mesa'); for (const o of [...objs.values()]) remove(o); vortex.clear(); rolls.clear(); tableInk = []; broadcast({ t: 'unink' }) }
+  else if (m.t === 'ping') { // señalar un lugar: aros del color del jugador
+    const now = performance.now(); if (now - (pl.pingT || 0) < 300 || !Array.isArray(m.p) || m.p.length !== 2 || !m.p.every(n => Number.isFinite(n) && Math.abs(n) < 12)) return
+    pl.pingT = now; broadcast({ t: 'ping', p: m.p, c: COLORS[pl.seat] })
+  }
+  else if (m.t === 'store') { if (GAMES[m.set] && [...objs.values()].some(o => o.set === m.set)) log(pid, 'guardó ' + GAMES[m.set]); if (typeof m.set === 'string') for (const o of [...objs.values()]) if (o.set === m.set) remove(o) }
+  else if (m.t === 'spawn' && objs.size < 700) {
+    const { a, x, z } = seatDir(pl.seat); let o
+    if (Object.hasOwn(GAMES, m.kind)) { if (![...objs.values()].some(o => o.set === m.kind)) { spawnSet(m.kind, x, z, a); log(pid, 'sacó ' + GAMES[m.kind]) } return }
+    const col = /^#[0-9a-f]{6}$/i.test(m.color) ? m.color : '#cccccc', at = (dx, y, dz) => [x * 4.4 + dx, y, z * 4.4 + dz]
+    if (m.kind === 'rpg') { [4, 6, 8, 10, 12, 20].forEach((n, i) => { const u = (i - 2.5) * .95; const d = add({ kind: 'die', ...(n !== 6 && { sides: n }) }, [x * 4.4 + z * u, 1 + i * .1, z * 4.4 - x * u]); d.body.quaternion.setFromEuler(rnd(6), rnd(6), rnd(6)); d.body.angularVelocity.set(rnd(10), rnd(10), rnd(10)) }); return } // girados: derechos quedan parados sobre una punta
+    if (m.kind === 'marbles') { for (let i = 0; i < 10; i++) add({ kind: 'ball', r: .14, color: COLORS[i % 8] }, at(rnd(1.5), .5 + i * .1, rnd(1.5))); return }
+    if (m.kind === 'tower') return spawnTower(x, z, a)
+    if (m.kind === 'gun') { o = { kind: 'gun' }; add(o, [x * 4.4, .6, z * 4.4]); o.yaw = a + Math.PI / 2; o.flip = false; setOrient(o); return } // apuntando al centro
+    if (m.kind === 'ball') o = { kind: 'ball', r: .4, color: col }
+    else if (m.kind === 'coin') o = { kind: 'disc', r: .3, h: .06, color: '#d9b26a', tex: 'coin', coin: true }
+    else if (m.kind === 'paper') o = { kind: 'paper', strokes: [] }
+    else
+    if (m.kind === 'std') o = { kind: 'deck', cards: stdCards() }
+    else if (m.kind === 'deck' && Array.isArray(m.cards) && m.cards.length && m.cards.length <= 500 && m.cards.every(c => Array.isArray(c) && typeof c[0] === 'string' && typeof c[1] === 'string')) o = { kind: 'deck', cards: m.cards.map(c => Number.isFinite(c[2]) ? [c[0], c[1], Math.max(.3, Math.min(3.3, c[2]))] : [c[0], c[1]]) }
+    else if (m.kind === 'die') o = { kind: 'die' }
+    else if (m.kind === 'pawn') o = { kind: 'pawn', color: /^#[0-9a-f]{6}$/i.test(m.color) ? m.color : '#cccccc' }
+    else if (m.kind === 'board' && typeof m.tex === 'string' && m.tex.length < 20 && !m.tex.includes(':')) { // tablero subido: el lado mayor mide 7, nace bloqueado en el centro
+      const ar = Number.isFinite(m.ar) ? Math.max(.3, Math.min(3.3, m.ar)) : 1, b = add({ kind: 'board', tex: m.tex, w: ar >= 1 ? 7 : 7 * ar, l: ar >= 1 ? 7 / ar : 7, locked: true }, [0, .06, 0])
+      b.yaw = a; b.flip = false; setOrient(b); return
+    }
+    else if (m.kind === 'standee' && typeof m.tex === 'string') o = { kind: 'standee', tex: m.tex }
+    if (!o) return
+    add(o, [x * 4.4 + rnd(1.2), 1.5, z * 4.4 + rnd(1.2)]); o.yaw = a; o.flip = o.kind === 'deck'; setOrient(o)
+  }
+}
+function step() {
+  const all = [...objs.values()], rack = all.find(o => o.kind === 'rack')
+  for (const [pid, o] of held) {
+    const t = hands.get(pid), b = o.body; if (!t) continue
+    // el cliente manda la altura: en precisión es la del objeto; si no, la de levantar (+ lo que ajustó con Shift+rueda)
+    let tx = t[0], ty = o.prec ? Math.max(.05, Math.min(8, t[1])) : Math.max(.3, Math.min(8, t[1])) + half(o)[1], tz = t[2]; o.snap = null
+    if (o.c4 && rack) { // sobre la rejilla la ficha se para de canto y se alinea con la columna más cercana
+      const l = rack.body.pointToLocalFrame(new CANNON.Vec3(tx, 0, tz)), col = Math.max(0, Math.min(6, Math.round(l.x / .6) + 3))
+      if (Math.abs(l.x) < 2.4 && Math.abs(l.z) < .9 && all.filter(d => d.slot?.rack === rack.id && d.slot.col === col).length < 6) {
+        const w = rack.body.pointToWorldFrame(new CANNON.Vec3((col - 3) * .6, 2.05, 0)); tx = w.x; ty = w.y; tz = w.z; o.snap = { rack: rack.id, col }
+      }
+    }
+    b.wakeUp()
+    if (o.prec) { // precisión: empuja con fuerza limitada (y compensa su peso); si algo lo traba, no lo atraviesa ni arrasa con todo
+      const want = (t, q, v) => clamp((t - q) * 6, 1) - v, mg = b.mass * 40
+      // cannon calcula el rozamiento con el peso, no con la carga real: cada contacto frena ~0,3 × peso. Con la mano empujando hasta 0,5 × peso,
+      // lo que roza sólo abajo (bloque flojo, palito suelto) se desliza, y lo apretado arriba y abajo no sale
+      fP.set(want(tx, b.position.x, b.velocity.x) * b.mass * 40, 0, want(tz, b.position.z, b.velocity.z) * b.mass * 40)
+      const hL = Math.hypot(fP.x, fP.z), hMax = mg * .5; if (hL > hMax) { fP.x *= hMax / hL; fP.z *= hMax / hL }
+      fP.y = b.mass * (40 + 900 * (ty - .006 - b.position.y) - 60 * b.velocity.y) // en altura, firme y un pelo hacia abajo: apoyado apenas en la fila de abajo; si sube, roza la de arriba y se traba
+      const L = fP.length(), cap = mg * 3; if (L > cap) fP.scale(cap / L, fP)
+      b.applyForce(fP)
+    } else b.velocity.set(clamp((tx - b.position.x) * 15, 40), clamp((ty - b.position.y) * 15, 40), clamp((tz - b.position.z) * 15, 40))
+    if (o.snap) { b.angularVelocity.setZero(); rack.body.quaternion.mult(QV, b.quaternion) }
+    else if (o.prec && o.kind === 'block') { b.angularVelocity.setZero(); setOrient(o) } // un bloque sale derecho: si gira, se encaja contra el vecino
+    else if (o.prec) b.angularVelocity.scale(.3, b.angularVelocity) // que roce y se acomode, sin girar descontrolado
+    else if (o.kind !== 'die') { b.angularVelocity.setZero(); setOrient(o) }
+  }
+  for (const [set, left] of vortex) { // cada ficha orbita el centro de la mesa a su propio radio: las de adentro dan más vueltas
+    for (const o of all) if (o.kind === 'tile' && o.set === set && o.vr && !o.held) {
+      const b = o.body, p = b.position, r = Math.hypot(p.x, p.z) || .01, pull = (o.vr - r) * 4
+      b.velocity.x = -p.z / r * 7 + p.x / r * pull; b.velocity.z = p.x / r * 7 + p.z / r * pull
+      o.yaw += .15; o.flip = true; setOrient(o)
+      if (left <= 1 / 60) { o.vr = 0; b.velocity.setZero() }
+    }
+    left <= 1 / 60 ? vortex.delete(set) : vortex.set(set, left - 1 / 60)
+  }
+  world.fixedStep(); settleRolls()
+  for (const [pid, o] of held) if (o.prec && hands.has(pid)) { // techo: en precisión no sube más de donde lo pusiste (los apoyos lo empujaban y rozaba la fila de arriba)
+    const b = o.body, top = Math.max(.05, Math.min(8, hands.get(pid)[1])); if (b.position.y > top) { b.position.y = top; if (b.velocity.y > 0) b.velocity.y = 0 }
+  }
+  // palitos y bloques: en cannon una pila de cajas finas nunca se queda quieta, tiembla para siempre.
+  // Los que están casi quietos medio segundo se duermen (quedan firmes); lo que descansa ENCIMA de algo que se mueve se despierta,
+  // así cae si le sacás el apoyo. Un vecino dormido sólo se despierta si lo tocan rápido: mover despacio no lo perturba.
+  if (++restTick % 30 === 0) for (const o of all) if ((o.kind === 'stick' || o.kind === 'block') && !o.held) { // cada medio segundo: ¿cuánto se corrió de verdad?
+    const b = o.body
+    if (b.sleepState !== CANNON.Body.SLEEPING && o.restP && b.position.distanceTo(o.restP) < .03 && Math.abs(o.restQ.x * b.quaternion.x + o.restQ.y * b.quaternion.y + o.restQ.z * b.quaternion.z + o.restQ.w * b.quaternion.w) > .9995) b.sleep()
+    o.restP = b.position.clone(); o.restQ = b.quaternion.clone()
+  }
+  for (const c of world.contacts) for (const [a, b, sg] of [[c.bi, c.bj, 1], [c.bj, c.bi, -1]])
+    if (b.sleepState === CANNON.Body.SLEEPING && a.sleepState !== CANNON.Body.SLEEPING && a.type === CANNON.Body.DYNAMIC && c.ni.y * sg > .5 && a.velocity.lengthSquared() + a.angularVelocity.lengthSquared() > .01) b.wakeUp()
+  // dentro de la rejilla las fichas van guiadas, sin choques: cada una baja deslizando hasta apoyarse en la de abajo
+  const cols = new Map()
+  for (const o of all) if (o.slot && !o.held) { const k = o.slot.rack + ':' + o.slot.col; cols.set(k, [...cols.get(k) || [], o]) }
+  for (const list of cols.values()) list.sort((a, b) => a.body.position.y - b.body.position.y).forEach((o, row) => {
+    const r = objs.get(o.slot.rack), b = o.body; if (!r) { o.slot = null; b.collisionFilterMask = 1; return }
+    const w = r.body.pointToWorldFrame(new CANNON.Vec3((o.slot.col - 3) * .6, -1.35 + row * .5, 0))
+    b.position.set(w.x, Math.max(w.y, b.position.y - .1), w.z); b.velocity.setZero(); b.angularVelocity.setZero(); r.body.quaternion.mult(QV, b.quaternion)
+  })
+  for (const o of all) if (o.inCup && !o.held) { // los dados dentro del cubilete viajan con él
+    const c = objs.get(o.inCup), b = o.body; if (!c) { o.inCup = null; b.collisionFilterMask = -1; continue }
+    c.body.pointToWorldFrame(new CANNON.Vec3(...CUP[o.cupSlot]), b.position); b.quaternion.copy(c.body.quaternion); b.velocity.setZero(); b.angularVelocity.setZero()
+  }
+  for (const pl of players.values()) { // abanicos: cartas paradas hacia su dueño, en arco; fichas en fila, como en un atril
+    const all = fanOf(pl.id); if (!all.length) continue
+    const fan = all.filter(f => f.kind === 'deck'), tiles = all.filter(f => f.kind === 'tile')
+    const { a, x, z } = seatDir(pl.seat), s = Math.min(.55, 4.4 / fan.length), sp = Math.min(.53, 7.4 / tiles.length), TILT = 1.3 // casi verticales, un poco echadas hacia atrás
+    tiles.forEach((o, i) => {
+      const u = i - (tiles.length - 1) / 2, [, h, l] = tileSize(o.face), b = o.body
+      b.position.set(x * 6.75 + z * u * sp, l / 2 * Math.sin(TILT) + h / 2 * Math.cos(TILT) + .01, z * 6.75 - x * u * sp); b.velocity.setZero(); b.angularVelocity.setZero()
+      qY.setFromAxisAngle(AY, a); qX.setFromAxisAngle(AX, TILT); qY.mult(qX, b.quaternion); b.wakeUp()
+    })
+    fan.forEach((o, i) => {
+      const u = i - (fan.length - 1) / 2, b = o.body, r = 6.4 + i * .025 // cada carta un pelo más cerca del dueño: no se encastran
+      b.position.set(x * r + z * u * s, .85 - Math.abs(u) * s * .06, z * r - x * u * s); b.velocity.setZero(); b.angularVelocity.setZero()
+      qY.setFromAxisAngle(AY, a); qX.setFromAxisAngle(AX, 1.05); qY.mult(qX, b.quaternion); qX.setFromAxisAngle(AY, -u * s * .12); b.quaternion.mult(qX, b.quaternion); b.wakeUp()
+    })
+  }
+  for (const o of objs.values()) { // nada se cae de la mesa
+    const p = o.body.position, r = Math.hypot(p.x, p.z)
+    if (r > EDGE) { p.x *= EDGE / r; p.z *= EDGE / r }
+    if (p.y < -1) { p.y = 1; o.body.velocity.setZero() }
+  }
+}
+function netTick() { // solo viaja lo que se movió
+  const o = []
+  for (const ob of objs.values()) {
+    const p = ob.body.position, q = ob.body.quaternion, k = [ob.id, p.x, p.y, p.z, q.x, q.y, q.z, q.w].map(n => Math.round(n * 1000) / 1000), s = k.join()
+    if (s !== ob.last) { ob.last = s; o.push(k) }
+  }
+  broadcast({ t: 'st', o, h: [...hands], w: [...walks], s: hits.splice(0) })
+}
+// guardar la mesa: todo lo que hay, con posiciones, imágenes subidas y dibujos de la mesa
+const SKIP = new Set(['restP', 'restQ', 'body', 'held', 'prec', 'snap', 'last', 'hand', 'shot', 'hitT', 'vr', 'watch', 'start', 'maxY0'])
+const KINDS = new Set(['deck', 'die', 'pawn', 'standee', 'board', 'token', 'paper', 'disc', 'tile', 'rack', 'ball', 'block', 'pin', 'stick', 'bag', 'cup', 'gun'])
+function snapshot() {
+  return { v: 1, texs: [...texData], ink: tableInk, objs: [...objs.values()].map(o => {
+    const r = {}; for (const k in o) if (!SKIP.has(k)) r[k] = o[k]
+    const q = o.body.position, w = o.body.quaternion; r.p = [q.x, q.y, q.z]; r.q = [w.x, w.y, w.z, w.w]; return r
+  }) }
+}
+function loadSnap(snap) {
+  if (!snap || !Array.isArray(snap.objs)) throw new Error('no es una mesa guardada')
+  for (const o of [...objs.values()]) remove(o); vortex.clear(); rolls.clear()
+  for (const [id, d] of snap.texs || []) if (typeof id === 'string' && typeof d === 'string' && d.startsWith('data:image/')) broadcast({ t: 'tex', id, d })
+  tableInk = Array.isArray(snap.ink) ? snap.ink.slice(0, INK_MAX) : []; broadcast({ t: 'ink', ink: tableInk })
+  for (const r of snap.objs) {
+    if (!r || !KINDS.has(r.kind) || !Number.isFinite(r.id) || !(r.p?.length === 3 && r.p.every(Number.isFinite)) || !(r.q?.length === 4 && r.q.every(Number.isFinite))) continue
+    const { p, q, ...o } = r; objs.set(o.id, o); makeBody(o, new CANNON.Vec3(...p), new CANNON.Quaternion(...q))
+    if (o.slot || o.inCup) o.body.collisionFilterMask = 0 // fichas dentro de la rejilla o del cubilete
+    nextId = Math.max(nextId, o.id + 1); broadcast({ t: 'obj', d: desc(o) })
+  }
+}
+function autosave() { // cada tanto en el navegador del anfitrión; si no entran las imágenes, se guarda sin ellas
+  if (!isHost || !objs.size) return
+  try { localStorage.mesaAuto = JSON.stringify(snapshot()) } catch { try { localStorage.mesaAuto = JSON.stringify({ ...snapshot(), texs: [] }) } catch {} }
+}
+function onConnection(c) {
+  c.on('open', () => {
+    const seat = SEATS.find(s => ![...players.values()].some(p => p.seat === s))
+    if (seat === undefined) return c.close() // mesa llena (8)
+    conns.set(c.peer, c); players.set(c.peer, { id: c.peer, name: String(c.metadata?.name || 'Jugador').slice(0, 20), seat })
+    c.send({ t: 'init', texs: [...texData], objs: [...objs.values()].map(desc), ink: tableInk })
+    for (const o of objs.values()) o.last = ''
+    sendPlayers()
+  })
+  c.on('data', m => handle(m, c.peer))
+  c.on('close', () => {
+    if (!conns.delete(c.peer)) return
+    const o = held.get(c.peer); if (o) { o.held = null; held.delete(c.peer) }
+    for (const f of objs.values()) if (f.hand === c.peer) setHand(f, null) // su abanico cae a la mesa
+    hands.delete(c.peer); walks.delete(c.peer); players.delete(c.peer); sendPlayers()
+  })
+}
+
+// ---------- entrada del jugador ----------
+const send = m => isHost ? handle(m, myId) : hostConn?.open && hostConn.send(m)
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(), plane = new THREE.Plane(UP, 0), ptr = new THREE.Vector3()
+const myPtr = [0, 0, 5]; let hover = null, holding = false, ptrDirty = false
+const hl = new THREE.BoxHelper(undefined, '#f2b84b'); hl.visible = false; scene.add(hl)
+const NAMES = { deck: 'Carta', die: 'Dado', pawn: 'Peón', standee: 'Figura', board: 'Tablero', token: 'Pieza', paper: 'Papel', disc: 'Ficha', tile: 'Ficha · R las mezcla en remolino', rack: '4 en línea · R la vacía', ball: 'Pelota', block: 'Bloque', pin: 'Bolo', stick: 'Palito', gun: 'Pistola de confeti · clic dispara, rueda la apunta', bag: 'Cuenco · arrastrá para sacar una ficha, Shift lo mueve', cup: 'Cubilete · soltá dados adentro, R los tira' }
+let hoverGame = null
+function toggleGame(key) { // la caja del estante trae el juego; si ya está afuera, lo guarda
+  if (![...view.values()].some(v => v.d.set === key)) send({ t: 'spawn', kind: key })
+  else if (confirm(`¿Guardar ${GAMES[key]}? Se sacan todas sus piezas de la mesa.`)) send({ t: 'store', set: key })
+}
+let pen = false, drawing = null, lastUV = null, overTable = false
+const qInv = new THREE.Quaternion(), r3 = n => Math.round(n * 1000) / 1000
+// dónde toca el fibrón: en el papel, coordenadas de la hoja; en lo demás, punto y normal locales al objeto (o a la mesa)
+function inkAt(id) {
+  if (id !== 'table' && view.get(id)?.d.kind === 'paper') return paperUV(id)
+  const t = id === 'table' ? felt : view.get(id)?.mesh, h = t && ray.intersectObject(t, true)[0]; if (!h?.face) return null
+  t.getWorldQuaternion(qInv).invert()
+  const n = h.face.normal.clone().transformDirection(h.object.matrixWorld).applyQuaternion(qInv)
+  return { p: t.worldToLocal(h.point.clone()).addScaledVector(n, .01), n }
+}
+function paperUV(id) { const v = view.get(id), h = v && ray.intersectObject(v.mesh)[0]; return h && h.face.materialIndex === 2 ? h.uv : null }
+const ink = (a, b) => send({ t: 'draw', id: drawing, s: a.p ? [...a.p.toArray(), ...b.p.toArray(), ...b.n.toArray()].map(r3) : [a.x, a.y, b.x, b.y], c: $('color').value })
+// aro que marca en qué casilla va a quedar la pieza que estoy arrastrando (tableros con encastre)
+const snapMark = new THREE.Mesh(new THREE.RingGeometry(.24, .32, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#f2b84b', transparent: true, opacity: .9, depthTest: false }))
+snapMark.renderOrder = 10; snapMark.visible = false; scene.add(snapMark)
+const sm = new THREE.Vector3()
+function showSnap() {
+  snapMark.visible = false
+  if (!holding || !GRID[holdSet] || keys.has('ShiftLeft') || keys.has('ShiftRight')) return
+  const bd = [...view.values()].find(v => v.d.kind === 'board' && v.d.set === holdSet); if (!bd) return
+  const [step, n] = GRID[holdSet], l = bd.mesh.worldToLocal(sm.set(myPtr[0], 0, myPtr[2]))
+  if (Math.abs(l.x) >= bd.d.w / 2 || Math.abs(l.z) >= bd.d.l / 2) return
+  const sn = v => Math.max(0, Math.min(n - 1, Math.round(v / step + (n - 1) / 2))) * step - (n - 1) / 2 * step // igual que el encastre del anfitrión
+  snapMark.position.copy(bd.mesh.localToWorld(sm.set(sn(l.x), .075, sn(l.z)))); snapMark.scale.setScalar(step / .75); snapMark.visible = true
+}
+let holdSet = null, pending = null, prec = null, lift = 0, clickT = null, rDown = null, focus = null, lastWheel = 0, menuPoint = null
+const PRECISE = ['block', 'stick'] // estos se mueven siempre en precisión; el resto, con Alt
+const flippable = d => !!d && (d.kind === 'deck' || d.kind === 'tile' || !!d.c2 || d.tex === 'coin')
+const tablePoint = () => ray.intersectObject(felt)[0]?.point.clone() ?? null
+function aimPtr() { // a dónde apunta la mano
+  if (prec) { // precisión: a la altura del objeto y un tercio del recorrido del mouse
+    plane.constant = -prec.y0; if (!ray.ray.intersectPlane(plane, ptr)) return
+    let x = prec.o.x + (ptr.x - prec.p.x) * .35, z = prec.o.z + (ptr.z - prec.p.z) * .35
+    const r = Math.hypot(x, z); if (r > EDGE) { x *= EDGE / r; z *= EDGE / r }
+    myPtr[0] = x; myPtr[1] = prec.y0 + lift; myPtr[2] = z
+  } else {
+    plane.constant = holding ? -HOLD : 0; if (!ray.ray.intersectPlane(plane, ptr)) return
+    const r = Math.hypot(ptr.x, ptr.z), k = r > EDGE ? EDGE / r : 1
+    myPtr[0] = ptr.x * k; myPtr[1] = holding ? HOLD + lift : 0; myPtr[2] = ptr.z * k
+  }
+  ptrDirty = true
+}
+function startGrab() { // el arrastre empieza recién cuando el mouse se movió: así un clic quieto queda libre para otras cosas
+  const { id, shift, alt, ctrl } = pending; pending = null
+  const v = view.get(id); if (!v) return
+  holding = true; lift = 0; prec = null; holdSet = v.d.kind === 'board' ? null : v.d.set; controls.enableZoom = false; cvs.style.cursor = 'grabbing'
+  if (alt || PRECISE.includes(v.d.kind)) { const y0 = v.mesh.position.y; plane.constant = -y0; if (ray.ray.intersectPlane(plane, ptr)) prec = { y0, o: v.mesh.position.clone(), p: ptr.clone() } }
+  aimPtr(); send({ t: 'ptr', p: [...myPtr] }); ptrDirty = false
+  send({ t: 'grab', id, whole: shift, prec: !!prec, cut: ctrl }); tone({ f: 2600, q: 2, dur: .03, vol: .1 })
+}
+function onMove(e) {
+  mouse.set(e.clientX / innerWidth * 2 - 1, -e.clientY / innerHeight * 2 + 1); ray.setFromCamera(mouse, camera)
+  if (walk && e.buttons & 2) { walk.yaw -= e.movementX * .004; walk.pitch = clamp(walk.pitch - e.movementY * .004, 1.2) }
+  if (!walk) {
+    if (pending && Math.hypot(e.clientX - pending.x, e.clientY - pending.y) > 4) pending.table ? (pending = null) : startGrab()
+    if (pending) return // todavía puede ser un clic
+    aimPtr()
+    if (drawing != null) { const h = inkAt(drawing); if (h && lastUV) ink(lastUV, h); lastUV = h; return }
+    if (holding) return
+  }
+  let o = walk ? null : ray.intersectObjects([...view.values()].map(v => v.mesh), true)[0]?.object // de pie solo se tocan las cajas
+  while (o && !o.userData.id) o = o.parent
+  hover = o ? o.userData.id : null
+  const d = view.get(hover)?.d
+  hoverGame = o ? null : ray.intersectObjects(shelfBoxes)[0]?.object.userData.game ?? null
+  overTable = !walk && !o && !hoverGame && !!ray.intersectObject(felt)[0]
+  cvs.style.cursor = pen && (o || overTable) ? 'crosshair' : !o ? (hoverGame ? 'pointer' : '') : 'grab'
+  $('tip').textContent = !d ? (hoverGame ? `${GAMES[hoverGame]} · clic para traerlo a la mesa o guardarlo` : '') : d.kind === 'deck' && d.n > 1 ? `Mazo · ${d.n} cartas` : NAMES[d.kind] + (d.locked ? ' · bloqueado' : '')
+  if (d) $('tip').textContent += ' · clic derecho: opciones'
+}
+// clic quieto: la acción simple (tirar, robar); dos seguidos: voltear, o centrar la cámara si fue en la mesa
+function clicked(id, point) {
+  if (clickT?.id === id) { clearTimeout(clickT.t); clickT = null; if (id === 'table') focus = point; else if (view.get(id)?.d.kind === 'paper') zoomTo(id); else if (flippable(view.get(id)?.d)) send({ t: 'act', a: 'flip', id }); return }
+  clearTimeout(clickT?.t)
+  clickT = { id, t: setTimeout(() => { clickT = null; const d = view.get(id)?.d; if (!d) return
+    if (d.kind === 'die' || d.kind === 'cup' || d.kind === 'gun' || d.tex === 'coin') send({ t: 'act', a: 'roll', id })
+    else if (d.kind === 'deck') send({ t: 'act', a: 'draw', id }) }, 260) }
+}
+// menú del clic derecho: todo lo que se le puede hacer a ese objeto (o a la mesa)
+function openMenu(x, y, id) {
+  const v = view.get(id), d = v?.d, items = [], it = (label, key, fn) => items.push([label, key, fn]), act = a => () => send({ t: 'act', a, id })
+  menuPoint = tablePoint()
+  { const q = d ? v.mesh.position : menuPoint; if (q) it(d ? 'Señalar' : 'Señalar acá', 'P', () => send({ t: 'ping', p: [q.x, q.z].map(r3) })) }
+  if (d) it('Acercar', 'Z' + (d.kind === 'paper' ? ' · doble clic' : ''), () => zoomTo(id))
+  if (!d) { it('Centrar la cámara acá', 'doble clic', () => { focus = menuPoint }); it('Borrar dibujos de la mesa', 'X', () => send({ t: 'act', a: 'erase', id: 'table' })) }
+  else {
+    if (d.kind === 'deck') it(d.n > 1 ? 'Robar una carta a mi mano' : 'Pasar a mi mano', 'clic', act('draw'))
+    const roll = { gun: 'Disparar confeti', die: 'Tirar', cup: 'Volcar los dados', deck: d.n > 1 && 'Mezclar', tile: 'Mezclar en remolino', rack: 'Vaciar', paper: 'Limpiar la hoja' }[d.kind] || (d.tex === 'coin' && 'Tirar la moneda')
+    if (roll) it(roll, 'R' + (d.kind === 'die' || d.kind === 'cup' || d.tex === 'coin' ? ' · clic' : ''), act('roll'))
+    if (d.kind === 'die') it('Tirar todos los dados', '', act('rollall'))
+    if (flippable(d)) it('Voltear', 'F · doble clic', act('flip'))
+    if (d.kind !== 'die') { it('Girar a la izquierda', 'Q · rueda', act('rotL')); it('Girar a la derecha', 'E · rueda', act('rotR')) }
+    if (d.kind === 'deck' && d.n > 1) { it('Cortar', 'C · Ctrl+arrastrar', act('cut')); it('Cortar y completar', '', act('cutc')) }
+    if (d.kind === 'deck') it('Abanico: abrir / juntar', 'G', act('fan'))
+    it(d.locked ? 'Desbloquear' : 'Bloquear', 'L', act('lock'))
+    if (v.mesh.userData.ribbon) it('Borrar lo dibujado', 'X', act('erase'))
+    if (d.set) { it('Reiniciar ' + setName(d.set), '', () => confirm(`¿Reiniciar ${setName(d.set)}? Vuelve todo a su armado inicial.`) && send({ t: 'reset', set: d.set })); if (GAMES[d.set]) it('Guardar ' + GAMES[d.set], '', () => toggleGame(d.set)) }
+    it('Borrar objeto', 'Supr', act('del'))
+  }
+  const m = $('menu')
+  m.replaceChildren(...items.map(([label, key, fn]) => { const b = document.createElement('button'), k = document.createElement('kbd'); b.setAttribute('role', 'menuitem'); k.textContent = key; b.append(label, k); b.onclick = () => { closeMenu(); fn() }; return b }))
+  m.hidden = false; m.style.left = Math.max(8, Math.min(x, innerWidth - m.offsetWidth - 8)) + 'px'; m.style.top = Math.max(8, Math.min(y, innerHeight - m.offsetHeight - 8)) + 'px'
+  m.querySelector('button').focus()
+}
+// ultrazoom: la cámara se planta encima del objeto, derecha y de frente (para leer o escribir en un papel)
+let closeUp = null
+function zoomTo(id) {
+  const v = view.get(id); if (!v || walk || closeUp) return
+  closeMenu(); drop()
+  closeUp = { id, pos: camera.position.clone(), tgt: controls.target.clone(), pen, f: 1 }
+  controls.enabled = false; $('bBack').hidden = false
+  if (v.d.kind === 'paper' && !pen) $('bPen').click() // en un papel, directo a escribir
+}
+function unzoom() {
+  if (!closeUp) return
+  camera.position.copy(closeUp.pos); controls.target.copy(closeUp.tgt); camera.up.set(0, 1, 0)
+  if (pen !== closeUp.pen) $('bPen').click()
+  closeUp = null; controls.enabled = true; $('bBack').hidden = true; controls.update()
+}
+$('bBack').onclick = unzoom
+const zb = new THREE.Box3(), zs = new THREE.Vector3(), zu = new THREE.Vector3(), zf = new THREE.Vector3(), zp = new THREE.Vector3()
+function closeUpCam(k) { // cada cuadro: acerca la cámara a la pose de lectura del objeto (lo sigue si se mueve)
+  const v = view.get(closeUp.id); if (!v) return unzoom()
+  const q = v.mesh.getWorldQuaternion(qInv); v.mesh.getWorldPosition(zp)
+  if (v.d.kind === 'die') { zu.set(0, 1, 0); zf.copy(closeUp.fwd ??= new THREE.Vector3(zp.x - camera.position.x, 0, zp.z - camera.position.z).normalize()) } // 'arriba' de la pantalla: hacia donde miraba al acercar // un dado se lee desde arriba de la mesa
+  else { zu.set(0, 1, 0).applyQuaternion(q); if (zu.y < 0) zu.negate(); zf.set(0, 0, -1).applyQuaternion(q) } // de frente a la cara; borde de arriba de la hoja = arriba de la pantalla
+  zb.setFromObject(v.mesh).getSize(zs)
+  const d = Math.max(zs.x, zs.z, .6) / 2 / Math.tan(camera.fov * Math.PI / 360) * 1.35 * closeUp.f + zs.y / 2
+  camera.position.lerp(zs.copy(zp).addScaledVector(zu, d), k); camera.up.lerp(zf, k).normalize(); camera.lookAt(zp)
+}
+function closeMenu() { if (!$('menu').hidden) { $('menu').hidden = true; cvs.focus?.() } }
+$('menu').onkeydown = e => {
+  const bs = [...$('menu').children], i = bs.indexOf(document.activeElement)
+  if (e.key === 'Escape') closeMenu()
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); bs[(i + (e.key === 'ArrowDown' ? 1 : bs.length - 1)) % bs.length].focus() }
+  e.stopPropagation() // que F, Q, etc. no actúen sobre la mesa mientras el menú está abierto
+}
+addEventListener('pointerdown', e => { if (!$('menu').contains(e.target)) closeMenu() }, true)
+function rightClick(e) {
+  if (walk || holding) return
+  onMove(e)
+  if (pen && (hover != null || overTable)) return send({ t: 'act', a: 'erase', id: hover ?? 'table' }) // con el fibrón, clic derecho borra
+  if (hover != null || overTable) openMenu(e.clientX, e.clientY, hover)
+}
+cvs.addEventListener('wheel', e => { // sosteniendo algo, la rueda lo gira (con Shift lo sube o lo baja) en vez de hacer zoom
+  if (closeUp && !holding) { e.preventDefault(); closeUp.f = Math.max(.25, Math.min(2.5, closeUp.f * (e.deltaY > 0 ? 1.12 : .89))); return }
+  if (!holding) return
+  e.preventDefault()
+  const dy = e.deltaY || e.deltaX // con Shift muchos navegadores mandan la rueda como horizontal
+  if (e.shiftKey) { lift = Math.max(prec ? .05 - prec.y0 : -1.3, Math.min(4, lift - Math.sign(dy) * .15)); aimPtr(); return }
+  const now = performance.now(); if (now - lastWheel < 90) return; lastWheel = now
+  send({ t: 'act', a: dy > 0 ? 'rotR' : 'rotL', id: null, fine: true })
+}, { passive: false })
+function setWalk(on) { // levantarse de la mesa o volver a sentarse
+  unzoom()
+  const me = playerList.find(p => p.id === myId); if (!me) return
+  const { a, x, z } = seatDir(me.seat)
+  drop(); hover = null; controls.enabled = !on; $('bWalk').textContent = on ? 'Sentarse' : 'Levantarse'
+  if (on) walk = { x: x * 13.5, z: z * 13.5, yaw: a, pitch: -.15 }
+  else { walk = null; camera.position.set(x * 15, 9, z * 15); controls.target.set(0, 1.5, 0); send({ t: 'walk', w: null }) }
+}
+cvs.addEventListener('contextmenu', e => e.preventDefault())
+cvs.addEventListener('pointermove', onMove)
+cvs.addEventListener('pointerdown', e => {
+  if (e.button === 2) { rDown = { x: e.clientX, y: e.clientY }; return }
+  if (e.button !== 0) return
+  onMove(e) // puede llegar un clic sin movimiento previo
+  if (pen && !walk && (hover != null || overTable)) { drawing = hover ?? 'table'; lastUV = inkAt(drawing); if (lastUV) ink(lastUV, lastUV); return }
+  if (hover == null) { if (hoverGame) toggleGame(hoverGame); else if (overTable) pending = { table: true, x: e.clientX, y: e.clientY, point: tablePoint() }; return }
+  pending = { id: hover, x: e.clientX, y: e.clientY, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey }
+})
+function drop(free) { drawing = null; if (holding) { send({ t: 'ptr', p: [...myPtr] }); holding = false; prec = null; lift = 0; controls.enableZoom = true; cvs.style.cursor = ''; send({ t: 'drop', free: !!free }) } }
+addEventListener('pointerup', e => {
+  if (e.button === 2) { if (rDown && Math.hypot(e.clientX - rDown.x, e.clientY - rDown.y) < 5) rightClick(e); rDown = null; return } // arrastrar con el derecho gira la cámara
+  if (e.button !== 0) return
+  if (pending) { const p = pending; pending = null; return clicked(p.table ? 'table' : p.id, p.point) }
+  drop(e.shiftKey) // Shift al soltar: sin encastrar en el tablero
+})
+addEventListener('blur', () => { pending = null; drop(); keys.clear() })
+addEventListener('keyup', e => keys.delete(e.code))
+addEventListener('keydown', e => {
+  if (e.target.matches?.('input,select') || e.ctrlKey || e.metaKey) return
+  keys.add(e.code)
+  if (e.key === 'Escape') { closeMenu(); return unzoom() }
+  if (e.key.toLowerCase() === 'p' && !walk) { const q = hover != null ? view.get(hover)?.mesh.position : null; send({ t: 'ping', p: (q ? [q.x, q.z] : [myPtr[0], myPtr[2]]).map(r3) }); return }
+  if (e.key.toLowerCase() === 'z') { if (closeUp) unzoom(); else if (hover != null) zoomTo(hover); return }
+  const a = { f: 'flip', q: 'rotL', e: 'rotR', r: 'roll', g: 'fan', l: 'lock', x: 'erase', c: 'cut', delete: 'del', backspace: 'del' }[e.key.toLowerCase()]
+  if (a && (hover != null || holding)) send({ t: 'act', a, id: hover })
+  else if (a === 'erase' && overTable) send({ t: 'act', a, id: 'table' })
+})
+
+// ---------- botones ----------
+const aspect = new Map() // id de imagen subida → ancho / alto
+async function toData(file, max = 512) {
+  const b = await createImageBitmap(file), s = Math.min(1, max / Math.max(b.width, b.height))
+  return [cv(Math.round(b.width * s), Math.round(b.height * s), (g, w, h) => g.drawImage(b, 0, 0, w, h)).toDataURL('image/webp', .85), b.width / b.height]
+}
+async function upload(file, max) { const id = Math.random().toString(36).slice(2, 12), [d, ar] = await toData(file, max); aspect.set(id, ar); send({ t: 'tex', id, d }); return id }
+const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })
+const status = s => { $('status').textContent = s }
+const setName = k => GAMES[k] || 'Torre de bloques'
+// la lista se arma al abrirla, con los juegos que hay en la mesa en ese momento
+const fillReset = () => { const sel = $('reset'); sel.length = 1; for (const k of new Set([...view.values()].map(v => v.d.set).filter(Boolean))) sel.add(new Option(setName(k), k)); if (sel.length === 1) sel.add(new Option('(no hay juegos en la mesa)', '')) }
+$('reset').onpointerdown = $('reset').onfocus = $('reset').onkeydown = fillReset
+$('reset').onchange = e => { const k = e.target.value; e.target.value = ''; if (k && confirm(`¿Reiniciar ${setName(k)}? Vuelve todo a su armado inicial.`)) send({ t: 'reset', set: k }) }
+$('things').onchange = e => { if (e.target.value) send({ t: 'spawn', kind: e.target.value, color: $('color').value }); e.target.value = '' }
+$('bFig').onclick = () => $('figFile').click()
+for (const [k, n] of Object.entries(GAMES)) $('games').add(new Option(n, k))
+$('games').onchange = e => { if (e.target.value) toggleGame(e.target.value); e.target.value = '' }
+$('bClear').onclick = e => { e.target.blur(); if (confirm('¿Vaciar la mesa? Se sacan todos los objetos y los dibujos de la mesa.')) send({ t: 'clear' }) }
+$('bSnd').onclick = e => { sndOn = !sndOn; e.target.setAttribute('aria-pressed', sndOn); try { localStorage.mesaSonido = sndOn ? 'si' : 'no' } catch {} e.target.blur() }
+$('bSnd').setAttribute('aria-pressed', sndOn)
+$('bWalk').onclick = e => { setWalk(!walk); e.target.blur() } // sin foco: que la barra espaciadora no lo vuelva a apretar
+$('bPen').onclick = e => { pen = !pen; e.target.setAttribute('aria-pressed', pen) }
+$('bBoard').onclick = () => $('boardFile').click()
+$('boardFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''
+  if (f) try { const id = await upload(f, 1024); send({ t: 'spawn', kind: 'board', tex: id, ar: aspect.get(id) }) } catch { status('No pude leer esa imagen (o es demasiado pesada)') }
+}
+$('figFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''
+  if (f) try { send({ t: 'spawn', kind: 'standee', tex: await upload(f) }) } catch { status('No pude leer esa imagen') }
+}
+$('bCards').onclick = () => $('dlg').showModal()
+$('dlgCancel').onclick = () => $('dlg').close()
+$('dlgForm').onsubmit = async () => {
+  const F = [...$('faces').files].sort(byName).slice(0, 500), B = [...$('backs').files].sort(byName)
+  try {
+    status('Subiendo cartas…')
+    const fi = [], bi = []
+    for (const f of F) fi.push(await upload(f))
+    for (const b of B) bi.push(await upload(b))
+    send({ t: 'spawn', kind: 'deck', cards: fi.map((f, i) => [f, bi.length ? bi[backIndex(i, fi.length, bi.length)] : 'std:back', aspect.get(f)]) }) // cada carta con la forma de su imagen
+    status('')
+  } catch { status('No pude leer alguna de las imágenes') }
+  $('dlgForm').reset()
+}
+const toggle = (btn, kind) => { const on = btn.getAttribute('aria-pressed') !== 'true'; btn.setAttribute('aria-pressed', on); localStream[kind]().forEach(t => { t.enabled = on }) }
+$('bCam').onclick = e => toggle(e.target, 'getVideoTracks')
+$('bMic').onclick = e => toggle(e.target, 'getAudioTracks')
+$('bLink').onclick = () => navigator.clipboard.writeText(location.href).then(() => status('Enlace copiado'), () => prompt('Copiá el enlace:', location.href))
+
+// ---------- entrar ----------
+async function getMedia(name) {
+  const V = { width: 320, height: 240 }
+  for (const c of [{ video: V, audio: true }, { video: V }, { audio: true }]) try { return await navigator.mediaDevices.getUserMedia(c) } catch {}
+  // sin cámara ni micrófono: un cartel con el nombre hace de "video"
+  const c = cv(320, 240, () => {}), g = c.getContext('2d')
+  const draw = () => { g.fillStyle = '#22252e'; g.fillRect(0, 0, 320, 240); g.fillStyle = '#ece8df'; g.font = 'bold 36px system-ui'; g.textAlign = 'center'; g.fillText(name, 160, 130, 300) }
+  draw(); setInterval(draw, 1000); return c.captureStream(2)
+}
+async function start(host) {
+  const name = $('name').value.trim().slice(0, 20) || 'Jugador'
+  const code = host ? Math.random().toString(36).slice(2, 7) : $('code').value.trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+  if (!code) return $('code').focus()
+  localStorage.mesaNombre = name
+  localStream = await getMedia(name)
+  $('lobby').remove(); for (const id of ['bar', 'help', 'me']) $(id).hidden = false
+  $('me').srcObject = localStream; $('me').play().catch(() => {})
+  history.replaceState(null, '', '#' + code); $('room').textContent = 'Mesa ' + code
+  const onPeerError = e => status(e.type === 'unavailable-id' ? 'Ese código de mesa ya está en uso: recargá y creá otra' : e.type === 'peer-unavailable' ? 'No encuentro esa mesa (¿código correcto? ¿el anfitrión sigue ahí?)' : 'Sin conexión al servidor de emparejamiento (' + e.type + ')')
+  const onCall = c => { c.answer(localStream); c.on('stream', s => setStream(c.peer, s)) }
+  if (host) {
+    isHost = true; myId = 'mesalibre-' + code
+    players.set(myId, { id: myId, name, seat: SEATS[0] }); sendPlayers()
+    setInterval(step, 1000 / 60); setInterval(netTick, 50); setInterval(autosave, 15000); addEventListener('beforeunload', autosave)
+    $('bSave').hidden = $('bLoad').hidden = false
+    try { peer = new Peer(myId); peer.on('connection', onConnection); peer.on('call', onCall); peer.on('error', onPeerError) } catch { status('Sin red: mesa solo local') }
+  } else {
+    status('Conectando…')
+    peer = new Peer(); peer.on('call', onCall); peer.on('error', onPeerError)
+    peer.on('open', id => {
+      myId = id; hostConn = peer.connect('mesalibre-' + code, { reliable: true, metadata: { name } })
+      hostConn.on('open', () => status('')); hostConn.on('data', recv); hostConn.on('close', () => status('Se cortó la conexión con el anfitrión'))
+    })
+  }
+  setInterval(() => { if (ptrDirty) { ptrDirty = false; send({ t: 'ptr', p: [...myPtr] }) } if (walk) send({ t: 'walk', w: [walk.x, walk.z, walk.yaw] }) }, 50)
+}
+$('name').value = localStorage.mesaNombre || ''
+$('code').value = location.hash.slice(1)
+$('create').onclick = () => start(true)
+try { if (localStorage.mesaAuto) $('resume').hidden = false } catch {}
+$('resume').onclick = async () => { let snap; try { snap = JSON.parse(localStorage.mesaAuto) } catch {} await start(true); try { loadSnap(snap) } catch { status('No pude retomar la mesa guardada') } }
+$('bSave').onclick = e => {
+  e.target.blur(); const a = document.createElement('a')
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(snapshot())], { type: 'application/json' })); a.download = `mesa-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`; a.click()
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+}
+$('bLoad').onclick = e => { e.target.blur(); $('loadFile').click() }
+$('loadFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f || !confirm('¿Cargar esa mesa? Reemplaza todo lo que hay ahora.')) return
+  try { loadSnap(JSON.parse(await f.text())) } catch { status('Ese archivo no es una mesa guardada') }
+}
+$('join').onclick = () => start(false)
+
+// ---------- dibujar ----------
+let lastT = performance.now(), plateTick = 0
+function updatePlates() { // "Ana · 5 en mano": cuenta cartas y fichas que están en la zona de cada jugador
+  for (const p of playerList) {
+    const av = avatars.get(p.id); if (!av || p.id === myId) continue
+    let n = 0; for (const v of view.values()) if ((v.d.kind === 'deck' || v.d.kind === 'tile') && inZone(p.seat, v.mesh.position)) n += v.d.kind === 'deck' ? v.d.n : 1
+    if (n === av.cnt) continue
+    av.cnt = n; av.plate.material.map.dispose(); av.plate.material.map = labelTex(p.name + (n ? ` · ${n} en mano` : ''), COLORS[p.seat], 512, 80); av.plate.material.needsUpdate = true
+  }
+}
+function frame(t) {
+  requestAnimationFrame(frame)
+  const dt = Math.min(.1, (t - lastT) / 1000), k = 1 - Math.exp(-dt * 18); lastT = t
+  if (walk) { // de pie: WASD camina, sin atravesar paredes ni la mesa
+    const on = (a, b) => keys.has(a) || keys.has(b), f = on('KeyW', 'ArrowUp') - on('KeyS', 'ArrowDown'), s = on('KeyD', 'ArrowRight') - on('KeyA', 'ArrowLeft'), sn = Math.sin(walk.yaw), cs = Math.cos(walk.yaw)
+    walk.x = clamp(walk.x + (-sn * f + cs * s) * 9 * dt, 19.6); walk.z = clamp(walk.z + (-cs * f - sn * s) * 9 * dt, 19.6)
+    const r = Math.hypot(walk.x, walk.z) || 1; if (r < 12.6) { walk.x *= 12.6 / r; walk.z *= 12.6 / r } // por fuera de las sillas
+    camera.position.set(walk.x, EYE, walk.z); camera.rotation.set(walk.pitch, walk.yaw, 0, 'YXZ')
+  } else if (closeUp) closeUpCam(Math.min(1, k * .7))
+  else {
+    if (focus) { // doble clic en la mesa: la cámara se desliza hasta centrarse ahí
+      fv.set(focus.x, 1, focus.z).sub(controls.target).multiplyScalar(Math.min(1, k * .6)); controls.target.add(fv); camera.position.add(fv)
+      if (fv.lengthSq() < 1e-6) focus = null
+    }
+    const tg = controls.target, tr = Math.hypot(tg.x, tg.z); if (tr > 9) { tg.x *= 9 / tr; tg.z *= 9 / tr } // que el paneo y el zoom al cursor no se vayan de la mesa
+    tg.y = Math.max(0, Math.min(5, tg.y))
+    controls.update()
+  }
+  const out = new Set()
+  for (const v of view.values()) {
+    if (v.d.set) out.add(v.d.set)
+    if (v.fresh) continue
+    v.mesh.position.lerp(v.tp, k); v.mesh.quaternion.slerp(v.tq, k)
+    if (v.d.kind === 'deck' || v.d.kind === 'tile') v.mesh.material[2] = matFor(hiddenFrom(v.mesh.position) ? v.d.back : v.d.face)
+  }
+  for (const [id, av] of avatars) {
+    const me = id === myId, hp = me ? myPtr : handT.get(id), w = me ? walk && [walk.x, walk.z, walk.yaw] : walkT.get(id), b = av.body
+    if (w) { b.position.lerp(tmp.set(w[0], 0, w[1]), k); b.rotation.y = w[2] } else { b.position.lerp(av.home, k); b.rotation.y = av.a }
+    av.armG.visible = !(me && (walk || closeUp)) // acercado, mi brazo taparía la hoja
+    const c = Math.cos(b.rotation.y), s = Math.sin(b.rotation.y)
+    for (const arm of av.arms) {
+      arm.sh.set(b.position.x + arm.s * .85 * c - .4 * s, 3.3, b.position.z - arm.s * .85 * s - .4 * c)
+      // de pie los brazos cuelgan; sentado, uno sigue al puntero y el otro descansa en la mesa
+      arm.cur.lerp(w ? tmp.set(arm.sh.x - .6 * s, -1.2, arm.sh.z - .6 * c) : arm.s === 1 && hp ? tmp.set(hp[0], hp[1] + .35, hp[2]) : arm.rest, k)
+      elbow.copy(arm.sh).add(arm.cur).multiplyScalar(.5); if (!w) elbow.y += 1.2; elbow.x += arm.s * .6 * c; elbow.z -= arm.s * .6 * s
+      stretch(arm.up, arm.sh, elbow); stretch(arm.lo, elbow, arm.cur); arm.hand.position.copy(arm.cur)
+    }
+  }
+  for (let i = fxs.length; i--;) if (!fxs[i](dt)) fxs.splice(i, 1)
+  if (++plateTick % 20 === 0) updatePlates()
+  showSnap()
+  fire.intensity = 170 + Math.sin(t * .013) * 35 + Math.sin(t * .037) * 25 // el fuego parpadea
+  const now = new Date(); clockM.rotation.z = now.getMinutes() * Math.PI / 30; clockH.rotation.z = (now.getHours() % 12 + now.getMinutes() / 60) * Math.PI / 6
+  for (const b of shelfBoxes) b.material[0].opacity = b.material[5].opacity = out.has(b.userData.game) ? .3 : 1 // caja vacía: el juego está en la mesa
+  const hv = view.get(hover); hl.visible = !!hv && !holding; if (hl.visible) hl.setFromObject(hv.mesh)
+  renderer.render(scene, camera)
+}
+requestAnimationFrame(frame)
+window.__mesa = { view, objs, send, players, avatars, camera, snapMark, zoomTo, unzoom } // para depurar desde la consola
+</script>
+</body>
+</html>
