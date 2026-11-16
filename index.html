@@ -44,6 +44,16 @@
   .or { text-align:center; color:var(--dim); margin:12px 0 0; }
   dialog::backdrop { background:#000a; }
   dialog small { color:var(--dim); display:block; margin-top:4px; }
+  #packsDlg { width:min(460px, 92vw); }
+  #packsDlg form > button { width:100%; margin-top:8px; }
+  #packList { list-style:none; padding:0; margin:14px 0 4px; display:flex; flex-direction:column; gap:6px; max-height:40vh; overflow:auto; }
+  #packList li { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  #packList span { flex:1; min-width:140px; }
+  #packList .empty { color:var(--dim); }
+  #peek { position:fixed; inset:0; z-index:6; background:#000c; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; }
+  #peek[hidden] { display:none; }
+  #peek canvas { border-radius:14px; box-shadow:0 10px 40px #000; }
+  #peek small { color:var(--dim); }
   dialog menu { display:flex; gap:8px; justify-content:flex-end; padding:0; margin:18px 0 0; }
   #bMenu { display:none; position:fixed; top:8px; left:8px; z-index:4; font-size:18px; padding:6px 13px; }
   @media (max-width: 760px) {
@@ -77,9 +87,10 @@
   <select id="things" aria-label="Agregar un objeto suelto">
     <option value="">Cositas…</option><option value="std">Mazo de póker</option><option value="pawn">Peón</option><option value="coin">Moneda</option>
     <optgroup label="Dados"><option value="die:4">d4</option><option value="die">d6</option><option value="die:8">d8</option><option value="die:10">d10</option><option value="die:12">d12</option><option value="die:20">d20</option><option value="d100">d100 (decenas + unidades)</option><option value="rpg">Juego completo (d4 a d100)</option></optgroup>
-    <optgroup label="Otras cosas"><option value="ball">Pelota</option><option value="marbles">Canicas ×10</option><option value="tower">Torre de bloques</option><option value="paper">Papel</option><option value="gun">Pistola de confeti</option></optgroup>
+    <optgroup label="Otras cosas"><option value="ball">Pelota</option><option value="marbles">Canicas ×10</option><option value="tower">Torre de bloques</option><option value="paper">Papel</option><option value="gun">Pistola de confeti</option><option value="counter">Contador de vida</option></optgroup>
   </select>
   <button id="bCards">Subir cartas…</button>
+  <button id="bPacks">Packs…</button>
   <button id="bFig">Figura con imagen…</button>
   <button id="bBoard">Subir tablero…</button>
   <select id="reset" aria-label="Reiniciar un juego a su armado inicial"><option value="">Reiniciar…</option></select>
@@ -104,8 +115,21 @@
 <div id="menu" role="menu" aria-label="Opciones del objeto" hidden></div>
 <div id="tip"></div>
 <ol id="log" aria-live="polite" aria-label="Registro de jugadas"></ol>
-<div id="help" hidden><b>Arrastrar</b> mover (Shift: mazo entero · Ctrl: cortar · Alt: precisión) · <b>Clic</b> tirar dado/moneda, robar carta · <b>Doble clic</b> voltear · <b>P</b> señalar · <b>Z</b> o doble clic en un papel: acercar para escribir · <b>Rueda</b> sosteniendo: girar (Shift: subir/bajar) · <b>Shift al soltar</b> sin encastrar · <b>Clic derecho</b> opciones (arrastrando: cámara) · <b>Botón del medio</b> desplazar · <b>Rueda</b> zoom · <b>Levantarse</b> y caminar con WASD</div>
+<div id="help" hidden><b>Arrastrar</b> mover (Shift: mazo entero · Ctrl: cortar · Alt: precisión) · <b>Clic</b> tirar dado/moneda, robar carta · <b>Doble clic</b> voltear · <b>V</b> ver en grande · <b>P</b> señalar · <b>Z</b> o doble clic en un papel: acercar para escribir · <b>Rueda</b> sosteniendo: girar (Shift: subir/bajar) · <b>Shift al soltar</b> sin encastrar · <b>Clic derecho</b> opciones (arrastrando: cámara) · <b>Botón del medio</b> desplazar · <b>Rueda</b> zoom · <b>Levantarse</b> y caminar con WASD</div>
 
+<dialog id="packsDlg">
+  <form method="dialog">
+    <strong>Packs</strong>
+    <small>Un pack guarda lo que pusiste en la mesa que no sea un juego de los estantes (mazos subidos, tableros, figuras, contadores, pistola de confeti…) para volver a sacarlo todo junto con un clic.</small>
+    <label>Nombre del pack <input id="packName" maxlength="30" placeholder="Mis mazos"></label>
+    <button type="button" id="packSave">Guardar lo de la mesa como pack</button>
+    <ul id="packList" aria-label="Packs guardados en este navegador"></ul>
+    <button type="button" id="packOpen">Abrir un pack desde archivo…</button>
+    <input id="packFile" type="file" accept=".json,application/json" hidden>
+    <menu><button value="close">Cerrar</button></menu>
+  </form>
+</dialog>
+<div id="peek" role="dialog" aria-label="Vista en grande" hidden><canvas id="peekC"></canvas><small>Tocá o apretá Esc para cerrar</small></div>
 <dialog id="dlg">
   <form id="dlgForm" method="dialog">
     <strong>Subir cartas</strong>
@@ -377,6 +401,25 @@ function build(d) {
     m = new THREE.Group(); m.add(new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, 28, 1, true), mat))
     const floor = new THREE.Mesh(new THREE.CircleGeometry(rb, 28).rotateX(-Math.PI / 2), mat); floor.position.y = -h / 2 + .02; m.add(floor)
     if (d.kind === 'bag') { const heap = new THREE.Mesh(new THREE.SphereGeometry(.56, 20, 12), new THREE.MeshStandardMaterial({ color: d.color, roughness: .5 })); heap.scale.y = .35; heap.position.y = .05; m.add(heap) }
+  }
+  else if (d.kind === 'counter') { // contador de vida: pantallita con el número entre un botón rojo "−" (izquierda) y uno verde "+" (derecha), vistos por quien lo sacó
+    const tex = (w, h, draw) => { const t = new THREE.CanvasTexture(cv(w, h, draw)); t.colorSpace = THREE.SRGBColorSpace; return t }
+    const screen = tex(380, 170, g => {
+      g.fillStyle = '#15171c'; g.fillRect(0, 0, 380, 170); g.fillStyle = d.color || '#e5484d'; g.fillRect(0, 0, 380, 12); g.fillRect(0, 158, 380, 12)
+      g.fillStyle = '#0c1a11'; g.fillRect(118, 26, 144, 118); g.strokeStyle = '#2b3a30'; g.lineWidth = 4; g.strokeRect(118, 26, 144, 118)
+      g.fillStyle = '#8affa8'; g.shadowColor = '#3dff6e'; g.shadowBlur = 14; g.textAlign = 'center'; g.textBaseline = 'middle'
+      g.font = `bold ${String(d.val).length > 2 ? 56 : 84}px "Courier New",monospace`; g.fillText(d.val, 190, 88, 136)
+    })
+    const dark = new THREE.MeshStandardMaterial({ color: '#23262e', roughness: .6 })
+    m = new THREE.Group()
+    m.add(new THREE.Mesh(new THREE.BoxGeometry(1.9, .22, .85), [dark, dark, new THREE.MeshStandardMaterial({ map: screen, roughness: .5 }), dark, dark, dark]))
+    for (const [x, btn, col, sym] of [[-.66, -1, '#d93b3b', '−'], [.66, 1, '#2f9e4f', '+']]) {
+      const map = tex(128, 128, g => { g.fillStyle = col; g.fillRect(0, 0, 128, 128); g.fillStyle = '#fff'; g.font = 'bold 120px system-ui'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(sym, 64, 70) })
+      map.center.set(.5, .5); map.rotation = Math.PI / 2 // la tapa del cilindro trae la imagen girada: sin esto el "−" se ve como "|"
+      const face = new THREE.MeshStandardMaterial({ map, roughness: .35 })
+      const b = new THREE.Mesh(new THREE.CylinderGeometry(.27, .29, .12, 32), [new THREE.MeshStandardMaterial({ color: col, roughness: .35 }), face, face])
+      b.position.set(x, .16, 0); b.userData.btn = btn; m.add(b) // el clic sobre el botón suma o resta (se lee en onMove)
+    }
   }
   else if (d.kind === 'gun') { // pistola de cotillón: cuerpo, culata, caño y boca acampanada; el caño mira a +x
     const pink = new THREE.MeshStandardMaterial({ color: '#e93d82', roughness: .35 }), gold = new THREE.MeshStandardMaterial({ color: '#f2c230', roughness: .3, metalness: .4 })
@@ -803,6 +846,7 @@ function recv(m) {
   else if (m.t === 'fx') { shuffleFx(view.get(m.id)); riffle() }
   else if (m.t === 'confetti') { confetti(m.p, m.d); popSnd() }
   else if (m.t === 'log') addLog(m.s, m.c)
+  else if (m.t === 'pack') packArrived(m.pack)
   else if (m.t === 'ping') pingFx(m.p, m.c)
   else if (m.t === 'flash') m.ids.forEach(flashObj)
   else if (m.t === 'ink') { unink(felt); for (const [s, c] of m.ink) ribbon(felt, s, c) }
@@ -833,12 +877,12 @@ const AX = new CANNON.Vec3(1, 0, 0), AY = new CANNON.Vec3(0, 1, 0), qY = new CAN
 
 function broadcast(m) { recv(m); for (const c of conns.values()) if (c.open) c.send(m) }
 const CUP = [[-.31, -.4, -.31], [.31, -.4, -.31], [-.31, -.4, .31], [.31, -.4, .31], [0, .22, 0]] // lugares de los 5 dados dentro del cubilete
-const HALF = { gun: [.6, .3, .12], die: [.3, .3, .3], bag: [.7, .25, .7], cup: [.95, .75, .95], pin: [.2, .55, .2], stick: [.06, .03, 1.5], standee: [.45, .65, .25], paper: [1.05, .01, 1.485], rack: [2.16, 1.6, .2], block: [.25, .15, .75] }
+const HALF = { counter: [.95, .17, .43], gun: [.6, .3, .12], die: [.3, .3, .3], bag: [.7, .25, .7], cup: [.95, .75, .95], pin: [.2, .55, .2], stick: [.06, .03, 1.5], standee: [.45, .65, .25], paper: [1.05, .01, 1.485], rack: [2.16, 1.6, .2], block: [.25, .15, .75] }
 const QV = new CANNON.Quaternion().setFromAxisAngle(AX, Math.PI / 2), walks = new Map(), vortex = new Map(), fP = new CANNON.Vec3(); let restTick = 0 // QV: ficha parada de canto; vortex: juego → segundos de remolino que le quedan
 const half = o => o.kind === 'deck' ? (([w, l]) => [w / 2, thick(o.cards.length) / 2, l / 2])(cardDims(o.cards.at(-1)[2] ?? STD_AR)) : o.kind === 'token' ? [.25, (PIECE_H[o.tex[7]] || .75) / 2, .25] : o.kind === 'board' ? [o.w / 2, .06, o.l / 2] : o.kind === 'disc' ? [o.r, o.h / 2, o.r] : o.kind === 'die' && o.sides ? [DIE_R[o.sides], DIE_R[o.sides], DIE_R[o.sides]] : o.kind === 'block' ? [.25, o.th || .15, .75] : o.kind === 'ball' ? [o.r, o.r, o.r] : o.kind === 'pawn' ? [.3, .6, .3].map(n => n * (o.s || 1)) : o.kind === 'tile' ? tileSize(o.face).map(n => n / 2) : HALF[o.kind]
 const flips = o => o.kind === 'deck' || o.kind === 'tile' || !!o.color2 || !!o.coin
 const GRID = { chess: [.75, 8], damas: [.75, 8], reversi: [.75, 8], go: [.5, 13] } // encastre: paso y cantidad de casillas por lado
-const desc = o => ({ ar: o.cards?.at(-1)[2] ?? null, id: o.id, kind: o.kind, set: o.set ?? null, n: o.cards?.length ?? 0, face: o.cards ? o.cards.at(-1)[0] : o.face ?? null, back: o.cards ? o.cards[0][1] : o.back ?? null, color: o.color ?? null, tex: o.tex ?? null, strokes: o.strokes ?? null, r: o.r ?? null, h: o.h ?? null, sides: o.sides ?? null, pct: o.pct ?? null, th: o.th ?? null, w: o.w ?? null, l: o.l ?? null, locked: !!o.locked, c2: o.color2 ?? null, s: o.s ?? null })
+const desc = o => ({ ar: o.cards?.at(-1)[2] ?? null, id: o.id, kind: o.kind, set: o.set ?? null, n: o.cards?.length ?? 0, face: o.cards ? o.cards.at(-1)[0] : o.face ?? null, back: o.cards ? o.cards[0][1] : o.back ?? null, color: o.color ?? null, tex: o.tex ?? null, strokes: o.strokes ?? null, r: o.r ?? null, h: o.h ?? null, sides: o.sides ?? null, pct: o.pct ?? null, val: o.val ?? null, th: o.th ?? null, w: o.w ?? null, l: o.l ?? null, locked: !!o.locked, c2: o.color2 ?? null, s: o.s ?? null })
 const faceUp = o => o.body.quaternion.vmult(AY).y > 0
 function makeBody(o, pos, quat) {
   if (o.body) world.removeBody(o.body)
@@ -1058,6 +1102,10 @@ function handle(m, pid) { // m viene de la red: validar todo
     if (m.a === 'erase' && m.id === 'table' && !held.has(pid)) { tableInk = []; broadcast({ t: 'unink' }); return }
     const o = held.get(pid) ?? objs.get(m.id); if (!o || (o.held && o.held !== pid)) return
     if (m.a === 'lock') { if (!o.held && !o.hand) { o.locked = !o.locked; rebuild(o) } return }
+    if (m.a === 'add' || m.a === 'setv') { // contador: sumar o poner un número (aunque esté bloqueado)
+      if (o.kind !== 'counter' || !Number.isFinite(m.n)) return
+      o.val = Math.max(-999, Math.min(9999, Math.round(m.a === 'add' ? o.val + m.n : m.n))); broadcast({ t: 'obj', d: desc(o) }); return
+    }
     if (m.a === 'erase') { if (o.strokes?.length) { o.strokes = []; broadcast({ t: 'obj', d: desc(o) }) } return }
     if (o.kind === 'rack' && m.a === 'roll') { // vaciar la rejilla
       for (const d of objs.values()) if (d.slot?.rack === o.id) { d.slot = null; d.body.collisionFilterMask = 1; d.body.wakeUp(); d.body.velocity.set(rnd(2), 2, rnd(6)) }
@@ -1142,16 +1190,28 @@ function handle(m, pid) { // m viene de la red: validar todo
   }
   else if (m.t === 'walk') { if (Array.isArray(m.w) && m.w.length === 3 && m.w.every(Number.isFinite)) walks.set(pid, m.w); else walks.delete(pid) }
   else if (m.t === 'reset') { // volver un juego a su armado inicial: se guarda y se vuelve a sacar
-    const had = [...objs.values()].filter(o => o.set && o.set === m.set); if (!had.length) return
-    had.forEach(remove); vortex.delete(m.set); log(pid, 'reinició ' + (GAMES[m.set] || 'la torre'))
-    const { a, x, z } = seatDir(pl.seat); Object.hasOwn(GAMES, m.set) ? spawnSet(m.set, x, z, a) : m.set === 'tower' && spawnTower(x, z, a)
+    const had = [...objs.values()].filter(o => o.set && o.set === m.set); if (!had.length || !(isGameSet(m.set) || packs.has(m.set))) return // sin el armado original no hay a qué volver
+    had.forEach(remove); vortex.delete(m.set); log(pid, 'reinició ' + setName(m.set))
+    const { a, x, z } = seatDir(pl.seat); packs.has(m.set) ? spawnPack(m.set) : Object.hasOwn(GAMES, m.set) ? spawnSet(m.set, x, z, a) : spawnTower(x, z, a)
   }
   else if (m.t === 'clear') { log(pid, 'vació la mesa'); for (const o of [...objs.values()]) remove(o); vortex.clear(); rolls.clear(); tableInk = []; broadcast({ t: 'unink' }) }
   else if (m.t === 'ping') { // señalar un lugar: aros del color del jugador
     const now = performance.now(); if (now - (pl.pingT || 0) < 300 || !Array.isArray(m.p) || m.p.length !== 2 || !m.p.every(n => Number.isFinite(n) && Math.abs(n) < 12)) return
     pl.pingT = now; broadcast({ t: 'ping', p: m.p, c: COLORS[pl.seat] })
   }
-  else if (m.t === 'store') { if (GAMES[m.set] && [...objs.values()].some(o => o.set === m.set)) log(pid, 'guardó ' + GAMES[m.set]); if (typeof m.set === 'string') for (const o of [...objs.values()]) if (o.set === m.set) remove(o) }
+  else if (m.t === 'mkpack') { // armar un pack con lo de la mesa y devolvérselo sólo a quien lo pidió
+    const pk = makePack(String(m.name || '').trim().slice(0, 30) || 'Pack')
+    pid === myId ? recv({ t: 'pack', pack: pk }) : conns.get(pid)?.send({ t: 'pack', pack: pk })
+  }
+  else if (m.t === 'loadpack') { // sacar un pack: si ya estaba en la mesa, se reemplaza
+    const pk = m.pack; if (!pk || pk.kind !== 'mesa-libre-pack' || !Array.isArray(pk.objs) || pk.objs.length > 400) return
+    const name = String(pk.name || 'Pack').trim().slice(0, 30) || 'Pack', set = 'pack:' + name, clean = pk.objs.map(cleanPackObj).filter(Boolean)
+    if (!clean.length || objs.size + clean.length > 900) return
+    const texs = (Array.isArray(pk.texs) ? pk.texs : []).filter(e => Array.isArray(e) && typeof e[0] === 'string' && e[0].length < 20 && !e[0].includes(':') && typeof e[1] === 'string' && e[1].startsWith('data:image/') && e[1].length < 2e6).slice(0, 600)
+    for (const o of [...objs.values()]) if (o.set === set) remove(o)
+    packs.set(set, { name, objs: clean, texs }); spawnPack(set); log(pid, 'sacó el pack ' + name)
+  }
+  else if (m.t === 'store') { if (typeof m.set === 'string' && [...objs.values()].some(o => o.set === m.set)) log(pid, 'guardó ' + setName(m.set)); if (typeof m.set === 'string') for (const o of [...objs.values()]) if (o.set === m.set) remove(o) }
   else if (m.t === 'spawn' && objs.size < 700) {
     const { a, x, z } = seatDir(pl.seat); let o
     if (Object.hasOwn(GAMES, m.kind)) { if (![...objs.values()].some(o => o.set === m.kind)) { spawnSet(m.kind, x, z, a); log(pid, 'sacó ' + GAMES[m.kind]) } return }
@@ -1162,6 +1222,7 @@ function handle(m, pid) { // m viene de la red: validar todo
     if (m.kind === 'rpg') return roll([[4], [6], [8], [10], [12], [20], [10, 't'], [10, 'u']], .85)
     if (m.kind === 'marbles') { for (let i = 0; i < 10; i++) add({ kind: 'ball', r: .14, color: COLORS[i % 8] }, at(rnd(1.5), .5 + i * .1, rnd(1.5))); return }
     if (m.kind === 'tower') return spawnTower(x, z, a)
+    if (m.kind === 'counter') { o = { kind: 'counter', val: 20, color: col }; add(o, at(rnd(1), .4, rnd(1))); o.yaw = a; o.flip = false; setOrient(o); return }
     if (m.kind === 'gun') { o = { kind: 'gun' }; add(o, [x * 4.4, .6, z * 4.4]); o.yaw = a + Math.PI / 2; o.flip = false; setOrient(o); return } // apuntando al centro
     if (m.kind === 'ball') o = { kind: 'ball', r: .4, color: col }
     else if (m.kind === 'coin') o = { kind: 'disc', r: .3, h: .06, color: '#d9b26a', tex: 'coin', coin: true }
@@ -1274,9 +1335,9 @@ function netTick() { // solo viaja lo que se movió
 }
 // guardar la mesa: todo lo que hay, con posiciones, imágenes subidas y dibujos de la mesa
 const SKIP = new Set(['restP', 'restQ', 'body', 'held', 'prec', 'snap', 'last', 'hand', 'shot', 'hitT', 'vr', 'watch', 'start', 'maxY0'])
-const KINDS = new Set(['deck', 'die', 'pawn', 'standee', 'board', 'token', 'paper', 'disc', 'tile', 'rack', 'ball', 'block', 'pin', 'stick', 'bag', 'cup', 'gun'])
+const KINDS = new Set(['counter', 'deck', 'die', 'pawn', 'standee', 'board', 'token', 'paper', 'disc', 'tile', 'rack', 'ball', 'block', 'pin', 'stick', 'bag', 'cup', 'gun'])
 function snapshot() {
-  return { v: 1, texs: [...texData], ink: tableInk, objs: [...objs.values()].map(o => {
+  return { v: 1, packs: [...packs].map(([k, v]) => [k, { ...v, texs: [] }]), texs: [...texData], ink: tableInk, objs: [...objs.values()].map(o => {
     const r = {}; for (const k in o) if (!SKIP.has(k)) r[k] = o[k]
     const q = o.body.position, w = o.body.quaternion; r.p = [q.x, q.y, q.z]; r.q = [w.x, w.y, w.z, w.w]; return r
   }) }
@@ -1285,6 +1346,7 @@ function loadSnap(snap) {
   if (!snap || !Array.isArray(snap.objs)) throw new Error('no es una mesa guardada')
   for (const o of [...objs.values()]) remove(o); vortex.clear(); rolls.clear()
   for (const [id, d] of snap.texs || []) if (typeof id === 'string' && typeof d === 'string' && d.startsWith('data:image/')) broadcast({ t: 'tex', id, d })
+  packs.clear(); for (const [k, v] of snap.packs || []) if (typeof k === 'string' && Array.isArray(v?.objs)) packs.set(k, { ...v, texs: [] })
   tableInk = Array.isArray(snap.ink) ? snap.ink.slice(0, INK_MAX) : []; broadcast({ t: 'ink', ink: tableInk })
   for (const r of snap.objs) {
     if (!r || !KINDS.has(r.kind) || !Number.isFinite(r.id) || !(r.p?.length === 3 && r.p.every(Number.isFinite)) || !(r.q?.length === 4 && r.q.every(Number.isFinite))) continue
@@ -1292,6 +1354,43 @@ function loadSnap(snap) {
     if (o.slot || o.inCup) o.body.collisionFilterMask = 0 // fichas dentro de la rejilla o del cubilete
     nextId = Math.max(nextId, o.id + 1); broadcast({ t: 'obj', d: desc(o) })
   }
+}
+// ---------- packs: lo propio de la mesa (mazos subidos, tableros, contadores, pistola…) guardado para sacarlo junto otra vez ----------
+const packs = new Map() // 'pack:nombre' → { name, objs, texs }: el armado original, para reiniciarlo
+const PACK_KEYS = ['kind', 'cards', 'color', 'color2', 'tex', 'face', 'back', 'strokes', 'r', 'h', 'w', 'l', 'locked', 's', 'coin', 'sides', 'pct', 'th', 'give', 'val']
+const isGameSet = k => !!k && (Object.hasOwn(GAMES, k) || k === 'tower')
+function makePack(name) {
+  const texIds = new Set(), out = []
+  for (const o of objs.values()) {
+    if (isGameSet(o.set) || o.held) continue
+    const r = {}; for (const k of PACK_KEYS) if (o[k] !== undefined) r[k] = o[k]
+    const q = o.body.position, w = o.body.quaternion; r.p = [q.x, q.y, q.z].map(r3); r.q = [w.x, w.y, w.z, w.w]; out.push(r)
+    for (const id of [...(o.cards || []).flatMap(c => [c[0], c[1]]), o.tex, o.face, o.back]) if (texData.has(id)) texIds.add(id)
+  }
+  return { kind: 'mesa-libre-pack', v: 1, name, objs: out, texs: [...texIds].map(id => [id, texData.get(id)]) }
+}
+// los packs llegan de cualquier jugador: sólo campos conocidos, con tipos y rangos sanos
+const okNum = v => Number.isFinite(v), okStr = v => typeof v === 'string' && v.length < 40, cl = (v, a, b) => Math.max(a, Math.min(b, v))
+function cleanPackObj(r) {
+  if (!r || !KINDS.has(r.kind) || !(r.p?.length === 3 && r.p.every(okNum)) || !(r.q?.length === 4 && r.q.every(okNum))) return null
+  const o = { kind: r.kind, p: r.p.map(n => cl(n, -12, 12)), q: r.q }
+  for (const k of ['color', 'color2', 'tex', 'face', 'back']) if (okStr(r[k])) o[k] = r[k]
+  for (const k of ['s', 'th', 'val']) if (okNum(r[k])) o[k] = cl(r[k], -999, 9999)
+  for (const k of ['locked', 'coin']) if (r[k]) o[k] = true
+  if (okNum(r.r)) o.r = cl(r.r, .05, 1.5); if (okNum(r.h)) o.h = cl(r.h, .02, 1.5); if (okNum(r.w)) o.w = cl(r.w, .5, 14); if (okNum(r.l)) o.l = cl(r.l, .5, 14)
+  if ([4, 8, 10, 12, 20].includes(r.sides)) o.sides = r.sides; if (o.sides === 10 && (r.pct === 't' || r.pct === 'u')) o.pct = r.pct
+  const strokes = len => Array.isArray(r.strokes) ? r.strokes.filter(x => Array.isArray(x) && Array.isArray(x[0]) && x[0].length === len && x[0].every(okNum) && /^#[0-9a-f]{6}$/i.test(x[1])) : []
+  if (r.kind === 'paper') o.strokes = strokes(4).slice(0, 20000); else if (r.strokes) o.strokes = strokes(9).slice(0, INK_MAX)
+  if (r.kind === 'deck') { if (!Array.isArray(r.cards) || !r.cards.length || r.cards.length > 500 || !r.cards.every(c => Array.isArray(c) && okStr(c[0]) && okStr(c[1]))) return null; o.cards = r.cards.map(c => okNum(c[2]) ? [c[0], c[1], cl(c[2], .3, 3.3)] : [c[0], c[1]]) }
+  if (r.kind === 'bag') { if (r.give?.kind !== 'disc') return null; o.give = { kind: 'disc', r: okNum(r.give.r) ? cl(r.give.r, .05, 1) : .2, h: okNum(r.give.h) ? cl(r.give.h, .02, 1) : .1 }; for (const k of ['color', 'color2']) if (okStr(r.give[k])) o.give[k] = r.give[k]; o.color = o.give.color }
+  const need = { disc: ['r', 'h'], ball: ['r'], board: ['w', 'l', 'tex'], tile: ['face', 'back'], token: ['tex'], standee: ['tex'], counter: ['val'] }[r.kind] || []
+  return need.every(k => o[k] !== undefined) ? o : null
+}
+function spawnPack(set) {
+  const pk = packs.get(set); if (!pk) return
+  for (const [id, d] of pk.texs) if (!texData.has(id)) broadcast({ t: 'tex', id, d })
+  for (const r of pk.objs) { const { p, q, ...o } = structuredClone(r); // copia: lo que pase en la mesa (robar, dibujar) no toca el armado guardado
+    o.set = set; o.id = nextId++; objs.set(o.id, o); makeBody(o, new CANNON.Vec3(...p), new CANNON.Quaternion(...q).normalize()); broadcast({ t: 'obj', d: desc(o) }) }
 }
 function autosave() { // cada tanto en el navegador del anfitrión; si no entran las imágenes, se guarda sin ellas
   if (!isHost || !objs.size) return
@@ -1320,8 +1419,8 @@ const send = m => isHost ? handle(m, myId) : hostConn?.open && hostConn.send(m)
 const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(), plane = new THREE.Plane(UP, 0), ptr = new THREE.Vector3()
 const myPtr = [0, 0, 5]; let hover = null, holding = false, ptrDirty = false
 const hl = new THREE.BoxHelper(undefined, '#f2b84b'); hl.visible = false; scene.add(hl)
-const NAMES = { deck: 'Carta', die: 'Dado', pawn: 'Peón', standee: 'Figura', board: 'Tablero', token: 'Pieza', paper: 'Papel', disc: 'Ficha', tile: 'Ficha · R las mezcla en remolino', rack: '4 en línea · R la vacía', ball: 'Pelota', block: 'Bloque', pin: 'Bolo', stick: 'Palito', gun: 'Pistola de confeti · clic dispara, rueda la apunta', bag: 'Cuenco · arrastrá para sacar una ficha, Shift lo mueve', cup: 'Cubilete · soltá dados adentro, R los tira' }
-let hoverGame = null
+const NAMES = { deck: 'Carta', die: 'Dado', pawn: 'Peón', standee: 'Figura', board: 'Tablero', token: 'Pieza', paper: 'Papel', disc: 'Ficha', tile: 'Ficha · R las mezcla en remolino', rack: '4 en línea · R la vacía', ball: 'Pelota', block: 'Bloque', pin: 'Bolo', stick: 'Palito', counter: 'Contador · botón verde suma, rojo resta', gun: 'Pistola de confeti · clic dispara, rueda la apunta', bag: 'Cuenco · arrastrá para sacar una ficha, Shift lo mueve', cup: 'Cubilete · soltá dados adentro, R los tira' }
+let hoverGame = null, hoverBtn = null // hoverBtn: ±1 si el puntero está sobre un botón del contador
 function toggleGame(key) { // la caja del estante trae el juego; si ya está afuera, lo guarda
   if (![...view.values()].some(v => v.d.set === key)) send({ t: 'spawn', kind: key })
   else if (confirm(`¿Guardar ${GAMES[key]}? Se sacan todas sus piezas de la mesa.`)) send({ t: 'store', set: key })
@@ -1389,6 +1488,7 @@ function onMove(e) {
     if (holding) return
   }
   let o = walk ? null : ray.intersectObjects([...view.values()].map(v => v.mesh), true)[0]?.object // de pie solo se tocan las cajas
+  hoverBtn = o?.userData.btn ?? null
   while (o && !o.userData.id) o = o.parent
   hover = o ? o.userData.id : null
   const d = view.get(hover)?.d
@@ -1414,6 +1514,11 @@ function openMenu(x, y, id) {
   if (d) it('Acercar', 'Z' + (d.kind === 'paper' ? ' · doble clic' : ''), () => zoomTo(id))
   if (!d) { it('Centrar la cámara acá', 'doble clic', () => { focus = menuPoint }); it('Borrar dibujos de la mesa', 'X', () => send({ t: 'act', a: 'erase', id: 'table' })) }
   else {
+    if (d.kind === 'counter') {
+      for (const n of [1, -1, 5, -5]) it((n > 0 ? '+' : '−') + Math.abs(n), Math.abs(n) === 1 ? 'botón ' + (n > 0 ? '+' : '−') : '', () => send({ t: 'act', a: 'add', n, id }))
+      it('Poner un número…', '', () => { const n = parseInt(prompt('¿Qué número?', d.val)); if (Number.isFinite(n)) send({ t: 'act', a: 'setv', n, id }) })
+    }
+    if (['deck', 'tile', 'board', 'standee', 'paper'].includes(d.kind)) it('Ver en grande', 'V', () => peek(id))
     if (d.kind === 'deck') it(d.n > 1 ? 'Robar una carta a mi mano' : 'Pasar a mi mano', 'clic', act('draw'))
     const roll = { gun: 'Disparar confeti', die: 'Tirar', cup: 'Volcar los dados', deck: d.n > 1 && 'Mezclar', tile: 'Mezclar en remolino', rack: 'Vaciar', paper: 'Limpiar la hoja' }[d.kind] || (d.tex === 'coin' && 'Tirar la moneda')
     if (roll) it(roll, 'R' + (d.kind === 'die' || d.kind === 'cup' || d.tex === 'coin' ? ' · clic' : ''), act('roll'))
@@ -1424,7 +1529,7 @@ function openMenu(x, y, id) {
     if (d.kind === 'deck') it('Abanico: abrir / juntar', 'G', act('fan'))
     it(d.locked ? 'Desbloquear' : 'Bloquear', 'L', act('lock'))
     if (v.mesh.userData.ribbon) it('Borrar lo dibujado', 'X', act('erase'))
-    if (d.set) { it('Reiniciar ' + setName(d.set), '', () => confirm(`¿Reiniciar ${setName(d.set)}? Vuelve todo a su armado inicial.`) && send({ t: 'reset', set: d.set })); if (GAMES[d.set]) it('Guardar ' + GAMES[d.set], '', () => toggleGame(d.set)) }
+    if (d.set) { it('Reiniciar ' + setName(d.set), '', () => confirm(`¿Reiniciar ${setName(d.set)}? Vuelve todo a su armado inicial.`) && send({ t: 'reset', set: d.set })); if (GAMES[d.set]) it('Guardar ' + GAMES[d.set], '', () => toggleGame(d.set)); else if (d.set.startsWith('pack:')) it('Guardar ' + setName(d.set), '', () => confirm(`¿Guardar ${setName(d.set)}? Se sacan todas sus cosas de la mesa.`) && send({ t: 'store', set: d.set })) }
     it('Borrar objeto', 'Supr', act('del'))
   }
   const m = $('menu')
@@ -1458,6 +1563,20 @@ function closeUpCam(k) { // cada cuadro: acerca la cámara a la pose de lectura 
   const d = Math.max(zs.x, zs.z, .6) / 2 / Math.tan(camera.fov * Math.PI / 360) * 1.35 * closeUp.f + zs.y / 2
   camera.position.lerp(zs.copy(zp).addScaledVector(zu, d), k); camera.up.lerp(zf, k).normalize(); camera.lookAt(zp)
 }
+// ver en grande, sólo en mi pantalla, lo que yo veo de ese objeto: una carta ajena o boca abajo se ve de dorso
+const pv = new THREE.Vector3()
+function peek(id) {
+  const v = view.get(id); if (!v) return
+  let mat = v.mesh.material
+  if (v.d.kind === 'deck' || v.d.kind === 'tile') mat = mat[pv.set(0, 1, 0).applyQuaternion(v.mesh.quaternion).y >= 0 ? 2 : 3]
+  else if (v.d.kind === 'standee') mat = v.mesh.children[0].material
+  else if (Array.isArray(mat)) mat = mat[2]
+  const img = mat?.map?.image; if (!img?.width) return
+  const c = $('peekC'), k = Math.min(innerWidth * .92 / img.width, innerHeight * .84 / img.height)
+  c.width = img.width; c.height = img.height; c.getContext('2d').drawImage(img, 0, 0); c.style.width = img.width * k + 'px'; c.style.height = img.height * k + 'px'
+  closeMenu(); $('peek').hidden = false
+}
+$('peek').onclick = () => { $('peek').hidden = true }
 function closeMenu() { if (!$('menu').hidden) { $('menu').hidden = true; cvs.focus?.() } }
 $('menu').onkeydown = e => {
   const bs = [...$('menu').children], i = bs.indexOf(document.activeElement)
@@ -1508,7 +1627,7 @@ cvs.addEventListener('pointerdown', e => {
   onMove(e) // puede llegar un clic sin movimiento previo
   if (pen && !walk && (hover != null || overTable)) { drawing = hover ?? 'table'; lastUV = inkAt(drawing); if (lastUV) ink(lastUV, lastUV); return }
   if (hover == null) { if (hoverGame) toggleGame(hoverGame); else if (overTable) { pending = { table: true, x: e.clientX, y: e.clientY, point: tablePoint() }; if (e.pointerType === 'touch') armLongPress() } return }
-  pending = { id: hover, x: e.clientX, y: e.clientY, shift: e.shiftKey || wholeNext === hover, alt: e.altKey, ctrl: e.ctrlKey }; wholeNext = null
+  pending = { id: hover, btn: hoverBtn, x: e.clientX, y: e.clientY, shift: e.shiftKey || wholeNext === hover, alt: e.altKey, ctrl: e.ctrlKey }; wholeNext = null
   if (e.pointerType === 'touch') armLongPress()
 })
 function drop(free) { drawing = null; if (holding) { send({ t: 'ptr', p: [...myPtr] }); holding = false; prec = null; lift = 0; controls.enableZoom = true; cvs.style.cursor = ''; send({ t: 'drop', free: !!free }) } }
@@ -1516,6 +1635,7 @@ addEventListener('pointerup', e => {
   if (e.button === 2) { if (rDown && Math.hypot(e.clientX - rDown.x, e.clientY - rDown.y) < 5) rightClick(e); rDown = null; return } // arrastrar con el derecho gira la cámara
   if (e.button !== 0) return
   clearTimeout(lpT)
+  if (pending?.btn) { const p = pending; pending = null; tone({ f: p.btn > 0 ? 2400 : 1500, q: 3, dur: .04, vol: .15 }); return send({ t: 'act', a: 'add', n: p.btn, id: p.id }) } // botón del contador: al instante, sin esperar el doble clic
   if (pending) { const p = pending; pending = null; return clicked(p.table ? 'table' : p.id, p.point) }
   drop(e.shiftKey) // Shift al soltar: sin encastrar en el tablero
 })
@@ -1524,7 +1644,8 @@ addEventListener('keyup', e => keys.delete(e.code))
 addEventListener('keydown', e => {
   if (e.target.matches?.('input,select') || e.ctrlKey || e.metaKey) return
   keys.add(e.code)
-  if (e.key === 'Escape') { closeMenu(); return unzoom() }
+  if (e.key === 'Escape') { $('peek').hidden = true; closeMenu(); return unzoom() }
+  if (e.key.toLowerCase() === 'v' && hover != null) return peek(hover)
   if (e.key.toLowerCase() === 'p' && !walk) { const q = hover != null ? view.get(hover)?.mesh.position : null; send({ t: 'ping', p: (q ? [q.x, q.z] : [myPtr[0], myPtr[2]]).map(r3) }); return }
   if (e.key.toLowerCase() === 'z') { if (closeUp) unzoom(); else if (hover != null) zoomTo(hover); return }
   const a = { f: 'flip', q: 'rotL', e: 'rotR', r: 'roll', g: 'fan', l: 'lock', x: 'erase', c: 'cut', delete: 'del', backspace: 'del' }[e.key.toLowerCase()]
@@ -1541,7 +1662,7 @@ async function toData(file, max = 512) {
 async function upload(file, max) { const id = Math.random().toString(36).slice(2, 12), [d, ar] = await toData(file, max); aspect.set(id, ar); send({ t: 'tex', id, d }); return id }
 const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })
 const status = s => { $('status').textContent = s }
-const setName = k => GAMES[k] || 'Torre de bloques'
+const setName = k => GAMES[k] || (k?.startsWith('pack:') ? 'el pack ' + k.slice(5) : 'la torre de bloques')
 // la lista se arma al abrirla, con los juegos que hay en la mesa en ese momento
 const fillReset = () => { const sel = $('reset'); sel.length = 1; for (const k of new Set([...view.values()].map(v => v.d.set).filter(Boolean))) sel.add(new Option(setName(k), k)); if (sel.length === 1) sel.add(new Option('(no hay juegos en la mesa)', '')) }
 $('reset').onpointerdown = $('reset').onfocus = $('reset').onkeydown = fillReset
@@ -1632,10 +1753,45 @@ $('code').value = location.hash.slice(1)
 $('create').onclick = () => start(true)
 try { if (localStorage.mesaAuto) $('resume').hidden = false } catch {}
 $('resume').onclick = async () => { let snap; try { snap = JSON.parse(localStorage.mesaAuto) } catch {} await start(true); try { loadSnap(snap) } catch { status('No pude retomar la mesa guardada') } }
-$('bSave').onclick = e => {
-  e.target.blur(); const a = document.createElement('a')
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(snapshot())], { type: 'application/json' })); a.download = `mesa-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`; a.click()
+function downloadJSON(data, name) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' })); a.download = name.replace(/[\\/:*?"<>|]/g, '-') + '.json'; a.click()
   setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+}
+$('bSave').onclick = e => { e.target.blur(); downloadJSON(snapshot(), `mesa-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}`) }
+// biblioteca de packs en este navegador (IndexedDB: con imágenes no entran en el almacenamiento común)
+const packDB = (mode, fn) => new Promise((ok, ko) => {
+  const r = indexedDB.open('mesa-libre', 1); r.onupgradeneeded = () => r.result.createObjectStore('packs', { keyPath: 'name' }); r.onerror = () => ko(r.error)
+  r.onsuccess = () => { const tx = r.result.transaction('packs', mode), q = fn(tx.objectStore('packs')); tx.oncomplete = () => ok(q?.result); tx.onerror = () => ko(tx.error) }
+})
+const flash = t => { status(t); setTimeout(() => { if ($('status').textContent === t) status('') }, 4000) }
+async function packArrived(pk) {
+  if (!pk?.objs?.length) return flash('No hay nada para guardar: los juegos de los estantes no entran en los packs')
+  try { await packDB('readwrite', st => st.put(pk)); flash(`Pack "${pk.name}" guardado (${pk.objs.length} objeto${pk.objs.length === 1 ? '' : 's'})`) }
+  catch { downloadJSON(pk, 'pack-' + pk.name); flash('No entró en el navegador: se descargó como archivo') }
+  renderPacks()
+}
+async function renderPacks() {
+  let list = []; try { list = await packDB('readonly', st => st.getAll()) } catch {}
+  const ul = $('packList'); ul.replaceChildren()
+  if (!list.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = 'Todavía no hay packs guardados en este navegador.'; ul.append(li) }
+  for (const pk of list) {
+    const li = document.createElement('li'), info = document.createElement('span'), btn = (txt, fn) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = txt; b.onclick = fn; return b }
+    info.textContent = `${pk.name} · ${pk.objs.length} objeto${pk.objs.length === 1 ? '' : 's'}`
+    li.append(info, btn('Sacar', () => { send({ t: 'loadpack', pack: pk }); $('packsDlg').close() }), btn('Descargar', () => downloadJSON(pk, 'pack-' + pk.name)),
+      btn('Borrar', async () => { if (confirm(`¿Borrar el pack "${pk.name}" de este navegador?`)) { await packDB('readwrite', st => st.delete(pk.name)); renderPacks() } }))
+    ul.append(li)
+  }
+}
+$('bPacks').onclick = e => { e.target.blur(); renderPacks(); $('packsDlg').showModal() }
+$('packSave').onclick = () => { const n = $('packName').value.trim(); if (!n) return $('packName').focus(); send({ t: 'mkpack', name: n }) }
+$('packOpen').onclick = () => $('packFile').click()
+$('packFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return
+  try {
+    const pk = JSON.parse(await f.text()); if (pk?.kind !== 'mesa-libre-pack' || !Array.isArray(pk.objs)) throw 0
+    try { await packDB('readwrite', st => st.put(pk)) } catch {}
+    renderPacks(); send({ t: 'loadpack', pack: pk }); $('packsDlg').close()
+  } catch { flash('Ese archivo no es un pack') }
 }
 $('bLoad').onclick = e => { e.target.blur(); $('loadFile').click() }
 $('loadFile').onchange = async e => {
@@ -1702,7 +1858,7 @@ function frame(t) {
   renderer.render(scene, camera)
 }
 requestAnimationFrame(frame)
-window.__mesa = { view, objs, send, players, avatars, camera, snapMark, zoomTo, unzoom } // para depurar desde la consola
+window.__mesa = { view, objs, send, players, avatars, camera, snapMark, zoomTo, unzoom, peek, clicked } // para depurar desde la consola
 </script>
 </body>
 </html>
