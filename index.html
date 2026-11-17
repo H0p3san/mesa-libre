@@ -1659,7 +1659,9 @@ function setWalk(on) { // levantarse de la mesa o volver a sentarse
   if (on) walk = { x: x * 13.5, z: z * 13.5, yaw: a, pitch: -.15 }
   else { walk = null; camera.position.set(x * 15, 9, z * 15); controls.target.set(0, 1.5, 0); send({ t: 'walk', w: null }) }
 }
-cvs.addEventListener('contextmenu', e => e.preventDefault())
+// en Windows el clic derecho del navegador llega al soltar el botón, cuando nuestro menú ya está debajo del puntero:
+// se bloquea en toda la página, menos en los campos de texto (ahí sirve para pegar)
+addEventListener('contextmenu', e => { if (!e.target.closest?.('input, textarea')) e.preventDefault() })
 cvs.addEventListener('pointermove', onMove)
 function armLongPress() { // mantener el dedo quieto medio segundo abre el menú del objeto (o de la mesa)
   clearTimeout(lpT); lpT = setTimeout(() => { if (!pending) return; const p = pending; pending = null; openMenu(p.x, p.y, p.table ? null : p.id) }, 480)
