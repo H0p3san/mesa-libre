@@ -802,7 +802,7 @@ function makeAvatar(p) {
     return { s, sh: new THREE.Vector3(), rest, cur: rest.clone(), up: seg(), lo: seg(), hand }
   })
   scene.add(g)
-  return { g, body, armG, home: body.position.clone(), a, screenMat, arms, plate, cnt: 0 }
+  return { g, body, armG, home: body.position.clone(), a, screenMat, arms, plate, zone, cnt: 0 }
 }
 function setStream(id, s) {
   streams.set(id, s); const av = avatars.get(id)
@@ -820,6 +820,7 @@ function setPlayers(list) {
       if (streams.has(p.id)) setStream(p.id, streams.get(p.id))
       if (p.id === myId) { const { x, z } = seatDir(p.seat); camera.position.set(x * 15, 9, z * 15) }
     }
+    { const { x, z } = seatDir(p.seat), off = p.zoneOff || 0; avatars.get(p.id).zone.position.set(x * 6.45 + z * off, .012, z * 6.45 - x * off) } // la zona, donde el jugador la haya corrido
     // el de id menor llama, así cada par abre una sola llamada
     if (p.id !== myId && myId < p.id && !calls.has(p.id) && peer?.open) { calls.add(p.id); peer.call(p.id, localStream).on('stream', s => setStream(p.id, s)) }
   }
@@ -830,7 +831,7 @@ function hiddenFrom(pos) {
   for (const p of playerList) {
     if (p.id === myId) continue
     const { x, z } = seatDir(p.seat), al = pos.x * x + pos.z * z, sd = pos.x * z - pos.z * x
-    if (al > 5.3 && Math.abs(sd) < 2.5) return true
+    if (al > 5.3 && Math.abs(sd - (p.zoneOff || 0)) < 2.5) return true
   }
   return false
 }
@@ -860,6 +861,7 @@ function recv(m) {
     for (const [id, p] of m.h) handT.set(id, p)
     walkT = new Map(m.w)
     for (const h of m.s || []) hitSound(...h)
+    landPrev = (m.g || []).find(e => e[0] === myId) || null
   }
 }
 
@@ -893,13 +895,37 @@ function makeBody(o, pos, quat) {
   b.position.copy(pos); if (quat) b.quaternion.copy(quat)
   if (o.kind === 'block' || o.kind === 'stick') { b.material = woodMat; b.sleepSpeedLimit = .75 } // un vecino dormido se despierta sólo si lo tocan a más de ~1 m/s: con cuidado no se perturba
   if (o.kind === 'stick') { b.linearDamping = .3; b.angularDamping = .8 } // chatos y amortiguados: con sección cuadrada rodaban sobre sí mismos sin parar
+  b.obj = o // para saber qué objeto tocó un rayo
   b.addEventListener('collide', e => hit(o, e))
   world.addBody(b); o.body = b; o.last = ''
 }
 // abanico: cartas sueltas con o.hand = dueño, ordenadas por o.ord; no chocan con nada, las acomoda step()
+// dónde caería una carta (o mazo) soltada ahora. Rayos en el centro y en las 4 esquinas: al solapar otra carta el centro suele quedar afuera.
+// merge: la soltás sobre el centro de un mazo (se apila); over: queda encima, alineada con la carta de abajo; free: suelta; hand: entra a mi mano
+const rayRes = new CANNON.RaycastResult(), rFrom = new CANNON.Vec3(), rTo = new CANNON.Vec3()
+const yawOf = b => { const ax = b.quaternion.vmult(AX); return Math.atan2(-ax.z, ax.x) }
+function landing(o, pid, pl) {
+  const t = hands.get(pid); if (!t || !pl || o.kind !== 'deck') return null
+  if (o.cards.length === 1 && inZone(pl.seat, { x: t[0], z: t[2] }, pl.zoneOff)) return { mode: 'hand' }
+  const [w, l] = cardDims(o.cards.at(-1)[2] ?? STD_AR), c = Math.cos(o.yaw), sn = Math.sin(o.yaw), mk = o.body.collisionFilterMask
+  o.body.collisionFilterMask = 0 // los rayos no chocan con la carta misma (ni con lo de las manos o el cubilete, que tienen máscara 0)
+  let top = 0, over = null, center = null
+  for (const [u, v] of [[0, 0], [-w / 2, -l / 2], [w / 2, -l / 2], [-w / 2, l / 2], [w / 2, l / 2]]) {
+    rFrom.set(t[0] + u * c + v * sn, 12, t[2] - u * sn + v * c); rTo.set(rFrom.x, -1, rFrom.z); rayRes.reset(); world.raycastClosest(rFrom, rTo, {}, rayRes)
+    if (!rayRes.hasHit) continue
+    const y = rayRes.hitPointWorld.y, ob = rayRes.body.obj, card = ob?.kind === 'deck' && !ob.held && !ob.hand
+    top = Math.max(top, y)
+    if (card && (!over || y >= over.y)) over = { ob, y }
+    if (card && !u && !v) center = ob
+  }
+  o.body.collisionFilterMask = mk
+  const merge = center && Math.hypot(t[0] - center.body.position.x, t[2] - center.body.position.z) < .45
+  return { mode: merge ? 'merge' : over ? 'over' : 'free', tgt: merge ? center : over?.ob, x: t[0], z: t[2], y: top + thick(o.cards.length) / 2 + .004 }
+}
 function setHand(o, pid) { o.hand = pid; o.body.collisionFilterMask = pid ? 0 : -1 }
 const fanOf = pid => [...objs.values()].filter(o => o.hand === pid && !o.held).sort((a, b) => a.ord - b.ord)
-const inZone = (seat, p) => { const { x, z } = seatDir(seat); return p.x * x + p.z * z > 5.3 && Math.abs(p.x * z - p.z * x) < 2.5 }
+// la zona de cada jugador puede correrse de costado (off, hacia su derecha), para dejar el frente libre para las cartas en juego
+const inZone = (seat, p, off = 0) => { const { x, z } = seatDir(seat); return p.x * x + p.z * z > 5.3 && Math.abs(p.x * z - p.z * x - off) < 2.5 }
 function add(o, pos) { o.id = nextId++; objs.set(o.id, o); makeBody(o, new CANNON.Vec3(...pos)); broadcast({ t: 'obj', d: desc(o) }); return o }
 function rebuild(o) { makeBody(o, o.body.position, o.body.quaternion); broadcast({ t: 'obj', d: desc(o) }) }
 function remove(o) { world.removeBody(o.body); objs.delete(o.id); if (o.held) held.delete(o.held); broadcast({ t: 'del', id: o.id }) }
@@ -1088,15 +1114,17 @@ function handle(m, pid) { // m viene de la red: validar todo
       return
     }
     const p = o.body.position
-    if ((o.kind === 'tile' || o.kind === 'deck' && o.cards.length === 1) && inZone(pl.seat, p)) { // carta o ficha suelta en mi zona: entra a mi mano donde la solté
+    const L = landing(o, pid, pl)
+    if ((o.kind === 'tile' && inZone(pl.seat, p, pl.zoneOff)) || L?.mode === 'hand') { // carta o ficha suelta en mi zona: entra a mi mano donde la solté
       const { x, z } = seatDir(pl.seat), lat = f => f.body.position.x * z - f.body.position.z * x, fan = fanOf(pid).filter(f => f.kind === o.kind), k = fan.findIndex(f => lat(f) > lat(o))
       o.ord = k < 0 ? (fan.at(-1)?.ord ?? 0) + 1 : ((fan[k - 1]?.ord ?? fan[k].ord - 1) + fan[k].ord) / 2
       return setHand(o, pid)
     }
     if (o.kind !== 'deck') { o.slot = o.snap; o.snap = null; if (o.slot) o.body.collisionFilterMask = 0; return } // ficha soltada sobre la rejilla: cae por su columna
-    let best = null, bd = .45
-    for (const t of objs.values()) if (t !== o && t.kind === 'deck' && !t.held && !t.hand) { const d = Math.hypot(t.body.position.x - o.body.position.x, t.body.position.z - o.body.position.z); if (d < bd) { bd = d; best = t } }
-    if (best) { best.cards = mergeCards(best.cards, faceUp(best), o.cards, faceUp(o)); remove(o); rebuild(best) }
+    if (!L) return
+    if (L.mode === 'merge' && !(m.free && o.cards.length === 1)) { const t = L.tgt; t.cards = mergeCards(t.cards, faceUp(t), o.cards, faceUp(o)); remove(o); return rebuild(t) } // Shift: una carta suelta no se apila (un mazo entero sí)
+    if (L.tgt) o.yaw = yawOf(L.tgt.body) // encima de otra: alineada con ella
+    o.body.position.set(L.x, L.y, L.z); o.body.velocity.setZero(); o.body.angularVelocity.setZero(); setOrient(o) // se apoya justo ahí, sin caer de alto
   }
   else if (m.t === 'act') {
     if (m.a === 'erase' && m.id === 'table' && !held.has(pid)) { tableInk = []; broadcast({ t: 'unink' }); return }
@@ -1211,6 +1239,7 @@ function handle(m, pid) { // m viene de la red: validar todo
     for (const o of [...objs.values()]) if (o.set === set) remove(o)
     packs.set(set, { name, objs: clean, texs }); spawnPack(set); log(pid, 'sacó el pack ' + name)
   }
+  else if (m.t === 'zone') { if (Number.isFinite(m.off)) { pl.zoneOff = cl(m.off, -3, 3); sendPlayers() } } // correr mi zona
   else if (m.t === 'store') { if (typeof m.set === 'string' && [...objs.values()].some(o => o.set === m.set)) log(pid, 'guardó ' + setName(m.set)); if (typeof m.set === 'string') for (const o of [...objs.values()]) if (o.set === m.set) remove(o) }
   else if (m.t === 'spawn' && objs.size < 700) {
     const { a, x, z } = seatDir(pl.seat); let o
@@ -1307,19 +1336,20 @@ function step() {
   for (const pl of players.values()) { // abanicos: cartas paradas hacia su dueño, en arco; fichas en fila, como en un atril
     const all = fanOf(pl.id); if (!all.length) continue
     const fan = all.filter(f => f.kind === 'deck'), tiles = all.filter(f => f.kind === 'tile')
-    const { a, x, z } = seatDir(pl.seat), s = Math.min(.55, 4.4 / fan.length), sp = Math.min(.53, 7.4 / tiles.length), TILT = 1.3 // casi verticales, un poco echadas hacia atrás
+    const { a, x, z } = seatDir(pl.seat), s = Math.min(.55, 4.4 / fan.length), sp = Math.min(.53, 7.4 / tiles.length), TILT = 1.3, off = pl.zoneOff || 0 // casi verticales, un poco echadas hacia atrás
     tiles.forEach((o, i) => {
       const u = i - (tiles.length - 1) / 2, [, h, l] = tileSize(o.face), b = o.body
-      b.position.set(x * 6.75 + z * u * sp, l / 2 * Math.sin(TILT) + h / 2 * Math.cos(TILT) + .01, z * 6.75 - x * u * sp); b.velocity.setZero(); b.angularVelocity.setZero()
+      b.position.set(x * 6.75 + z * (u * sp + off), l / 2 * Math.sin(TILT) + h / 2 * Math.cos(TILT) + .01, z * 6.75 - x * (u * sp + off)); b.velocity.setZero(); b.angularVelocity.setZero()
       qY.setFromAxisAngle(AY, a); qX.setFromAxisAngle(AX, TILT); qY.mult(qX, b.quaternion); b.wakeUp()
     })
     fan.forEach((o, i) => {
       const u = i - (fan.length - 1) / 2, b = o.body, r = 6.4 + i * .025 // cada carta un pelo más cerca del dueño: no se encastran
-      b.position.set(x * r + z * u * s, .85 - Math.abs(u) * s * .06, z * r - x * u * s); b.velocity.setZero(); b.angularVelocity.setZero()
+      b.position.set(x * r + z * (u * s + off), .85 - Math.abs(u) * s * .06, z * r - x * (u * s + off)); b.velocity.setZero(); b.angularVelocity.setZero()
       qY.setFromAxisAngle(AY, a); qX.setFromAxisAngle(AX, 1.05); qY.mult(qX, b.quaternion); qX.setFromAxisAngle(AY, -u * s * .12); b.quaternion.mult(qX, b.quaternion); b.wakeUp()
     })
   }
-  for (const o of objs.values()) { // nada se cae de la mesa
+  for (const o of objs.values()) { // nada se cae de la mesa (lo que está en una mano lo acomoda el abanico, aunque sobresalga)
+    if (o.hand) continue
     const p = o.body.position, r = Math.hypot(p.x, p.z)
     if (r > EDGE) { p.x *= EDGE / r; p.z *= EDGE / r }
     if (p.y < -1) { p.y = 1; o.body.velocity.setZero() }
@@ -1331,7 +1361,9 @@ function netTick() { // solo viaja lo que se movió
     const p = ob.body.position, q = ob.body.quaternion, k = [ob.id, p.x, p.y, p.z, q.x, q.y, q.z, q.w].map(n => Math.round(n * 1000) / 1000), s = k.join()
     if (s !== ob.last) { ob.last = s; o.push(k) }
   }
-  broadcast({ t: 'st', o, h: [...hands], w: [...walks], s: hits.splice(0) })
+  const g = []
+  for (const [pid, ob] of held) { const L = landing(ob, pid, players.get(pid)); if (L) g.push(L.mode === 'hand' ? [pid, 3] : [pid, ['free', 'over', 'merge'].indexOf(L.mode), r3(L.x), r3(L.y), r3(L.z), r3(L.tgt ? yawOf(L.tgt.body) : ob.yaw), ...cardDims(ob.cards.at(-1)[2] ?? STD_AR).map(r3)]) }
+  broadcast({ t: 'st', o, h: [...hands], w: [...walks], s: hits.splice(0), g })
 }
 // guardar la mesa: todo lo que hay, con posiciones, imágenes subidas y dibujos de la mesa
 const SKIP = new Set(['restP', 'restQ', 'body', 'held', 'prec', 'snap', 'last', 'hand', 'shot', 'hitT', 'vr', 'watch', 'start', 'maxY0'])
@@ -1451,6 +1483,19 @@ function showSnap() {
   snapMark.position.copy(bd.mesh.localToWorld(sm.set(sn(l.x), .075, sn(l.z)))); snapMark.scale.setScalar(step / .75); snapMark.visible = true
 }
 let lpT = null, touchN = 0, wholeNext = null
+// rectángulo que muestra dónde va a caer la carta que arrastro: verde encima de otra, dorado se apila, blanco suelta
+const landMark = new THREE.Group(), LAND = [['#ffffff', 'Queda suelta en la mesa'], ['#46d17a', 'Queda encima de la carta'], ['#f2b84b', 'Se apila en el mazo'], [null, 'Va a tu mano']]
+landMark.add(new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ transparent: true, opacity: .22, depthTest: false })),
+  new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([[-.5, 0, -.5], [.5, 0, -.5], [.5, 0, .5], [-.5, 0, .5]].map(q => new THREE.Vector3(...q))), new THREE.LineBasicMaterial({ transparent: true, depthTest: false })))
+landMark.traverse(x => { x.renderOrder = 12 }); landMark.visible = false; scene.add(landMark)
+let landPrev = null, holdSingle = false
+function showLanding() {
+  landMark.visible = false; if (!holding || !landPrev) return
+  let mode = landPrev[1]; if (mode === 2 && holdSingle && (keys.has('ShiftLeft') || keys.has('ShiftRight'))) mode = 1 // con Shift una carta suelta no se apila
+  $('tip').textContent = LAND[mode][1]; if (mode === 3) return
+  const [, , x, y, z, yaw, w, l] = landPrev; landMark.position.set(x, y + .01, z); landMark.rotation.set(0, yaw, 0); landMark.scale.set(w, 1, l)
+  landMark.children.forEach(c => c.material.color.set(LAND[mode][0])); landMark.visible = true
+}
 let holdSet = null, pending = null, prec = null, lift = 0, clickT = null, rDown = null, focus = null, lastWheel = 0, menuPoint = null
 const PRECISE = ['block', 'stick'] // estos se mueven siempre en precisión; el resto, con Alt
 const flippable = d => !!d && (d.kind === 'deck' || d.kind === 'tile' || !!d.c2 || d.tex === 'coin')
@@ -1472,7 +1517,7 @@ function startGrab() { // el arrastre empieza recién cuando el mouse se movió:
   clearTimeout(lpT)
   const { id, shift, alt, ctrl } = pending; pending = null
   const v = view.get(id); if (!v) return
-  holding = true; lift = 0; prec = null; holdSet = v.d.kind === 'board' ? null : v.d.set; controls.enableZoom = false; cvs.style.cursor = 'grabbing'
+  holding = true; lift = 0; prec = null; landPrev = null; holdSingle = v.d.kind === 'deck' && (v.d.n === 1 || !shift); holdSet = v.d.kind === 'board' ? null : v.d.set; controls.enableZoom = false; cvs.style.cursor = 'grabbing'
   if (alt || PRECISE.includes(v.d.kind)) { const y0 = v.mesh.position.y; plane.constant = -y0; if (ray.ray.intersectPlane(plane, ptr)) prec = { y0, o: v.mesh.position.clone(), p: ptr.clone() } }
   aimPtr(); send({ t: 'ptr', p: [...myPtr] }); ptrDirty = false
   send({ t: 'grab', id, whole: shift, prec: !!prec, cut: ctrl }); tone({ f: 2600, q: 2, dur: .03, vol: .1 })
@@ -1512,6 +1557,12 @@ function openMenu(x, y, id) {
   menuPoint = tablePoint()
   { const q = d ? v.mesh.position : menuPoint; if (q) it(d ? 'Señalar' : 'Señalar acá', 'P', () => send({ t: 'ping', p: [q.x, q.z].map(r3) })) }
   if (d) it('Acercar', 'Z' + (d.kind === 'paper' ? ' · doble clic' : ''), () => zoomTo(id))
+  if (!d) { // correr mi zona de a 1,5 hacia un costado (mirando desde mi asiento)
+    const off = playerList.find(q => q.id === myId)?.zoneOff || 0
+    if (off > -3) it('Correr mi zona a la izquierda', '←', () => send({ t: 'zone', off: off - 1.5 }))
+    if (off < 3) it('Correr mi zona a la derecha', '→', () => send({ t: 'zone', off: off + 1.5 }))
+    if (off) it('Centrar mi zona', '', () => send({ t: 'zone', off: 0 }))
+  }
   if (!d) { it('Centrar la cámara acá', 'doble clic', () => { focus = menuPoint }); it('Borrar dibujos de la mesa', 'X', () => send({ t: 'act', a: 'erase', id: 'table' })) }
   else {
     if (d.kind === 'counter') {
@@ -1630,7 +1681,7 @@ cvs.addEventListener('pointerdown', e => {
   pending = { id: hover, btn: hoverBtn, x: e.clientX, y: e.clientY, shift: e.shiftKey || wholeNext === hover, alt: e.altKey, ctrl: e.ctrlKey }; wholeNext = null
   if (e.pointerType === 'touch') armLongPress()
 })
-function drop(free) { drawing = null; if (holding) { send({ t: 'ptr', p: [...myPtr] }); holding = false; prec = null; lift = 0; controls.enableZoom = true; cvs.style.cursor = ''; send({ t: 'drop', free: !!free }) } }
+function drop(free) { drawing = null; if (holding) { $('tip').textContent = ''; send({ t: 'ptr', p: [...myPtr] }); holding = false; prec = null; lift = 0; controls.enableZoom = true; cvs.style.cursor = ''; send({ t: 'drop', free: !!free }) } }
 addEventListener('pointerup', e => {
   if (e.button === 2) { if (rDown && Math.hypot(e.clientX - rDown.x, e.clientY - rDown.y) < 5) rightClick(e); rDown = null; return } // arrastrar con el derecho gira la cámara
   if (e.button !== 0) return
@@ -1805,7 +1856,7 @@ let lastT = performance.now(), plateTick = 0
 function updatePlates() { // "Ana · 5 en mano": cuenta cartas y fichas que están en la zona de cada jugador
   for (const p of playerList) {
     const av = avatars.get(p.id); if (!av || p.id === myId) continue
-    let n = 0; for (const v of view.values()) if ((v.d.kind === 'deck' || v.d.kind === 'tile') && inZone(p.seat, v.mesh.position)) n += v.d.kind === 'deck' ? v.d.n : 1
+    let n = 0; for (const v of view.values()) if ((v.d.kind === 'deck' || v.d.kind === 'tile') && inZone(p.seat, v.mesh.position, p.zoneOff)) n += v.d.kind === 'deck' ? v.d.n : 1
     if (n === av.cnt) continue
     av.cnt = n; av.plate.material.map.dispose(); av.plate.material.map = labelTex(p.name + (n ? ` · ${n} en mano` : ''), COLORS[p.seat], 512, 80); av.plate.material.needsUpdate = true
   }
@@ -1850,7 +1901,7 @@ function frame(t) {
   }
   for (let i = fxs.length; i--;) if (!fxs[i](dt)) fxs.splice(i, 1)
   if (++plateTick % 20 === 0) updatePlates()
-  showSnap()
+  showSnap(); showLanding()
   fire.intensity = 170 + Math.sin(t * .013) * 35 + Math.sin(t * .037) * 25 // el fuego parpadea
   const now = new Date(); clockM.rotation.z = now.getMinutes() * Math.PI / 30; clockH.rotation.z = (now.getHours() % 12 + now.getMinutes() / 60) * Math.PI / 6
   for (const b of shelfBoxes) b.material[0].opacity = b.material[5].opacity = out.has(b.userData.game) ? .3 : 1 // caja vacía: el juego está en la mesa
