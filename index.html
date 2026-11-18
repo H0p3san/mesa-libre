@@ -72,6 +72,27 @@
     #menu button { padding:11px 12px; }
   }
 </style>
+<script>
+// Si algo falla al arrancar (librerías bloqueadas en la red, WebGL, error de JS) se avisa en pantalla en vez de quedar todo en negro
+(() => {
+  let lastErr = '', box
+  const show = msg => {
+    if (!box) {
+      box = document.createElement('div'); box.id = 'fatal'
+      box.style.cssText = 'position:fixed;z-index:99999;left:50%;top:12px;transform:translateX(-50%);max-width:min(92vw,560px);background:#2a1215;color:#ffd9d6;border:1px solid #c0392b;border-radius:10px;padding:12px 16px;font:14px/1.4 system-ui,sans-serif;text-align:center'
+      document.addEventListener('DOMContentLoaded', () => document.body.append(box)); if (document.body) document.body.append(box)
+    }
+    box.textContent = msg + (lastErr ? ' [' + lastErr + ']' : '')
+  }
+  window.__fatal = show
+  addEventListener('error', e => { lastErr = String(e.message || '').slice(0, 120) })
+  addEventListener('unhandledrejection', e => { lastErr = String((e.reason && e.reason.message) || e.reason || '').slice(0, 120) })
+  const t0 = Date.now(), iv = setInterval(() => {
+    if (window.__mesa) { clearInterval(iv); box && box.remove(); return }
+    if (Date.now() - t0 > 12000) show('La mesa no terminó de cargar. Puede que tu red o navegador bloquee cdn.jsdelivr.net o unpkg.com, o que WebGL esté desactivado. Probá con otra red o con Chrome/Firefox (fuera de WhatsApp/Instagram) y recargá.')
+  }, 1000)
+})()
+</script>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script type="importmap">
 { "imports": {
@@ -338,6 +359,7 @@ function labelTex(text, bg, w = 320, h = 240) {
 }
 
 // ---------- escena ----------
+{ const t = document.createElement('canvas'); if (!(t.getContext('webgl2') || t.getContext('webgl'))) { window.__fatal('Tu navegador no pudo iniciar WebGL (el 3D). Activá la aceleración por hardware o probá con Chrome/Firefox/Edge.'); throw new Error('WebGL no disponible') } }
 const renderer = new THREE.WebGLRenderer({ antialias: true })
 const coarse = matchMedia('(pointer: coarse)').matches // pantalla táctil: menos resolución, sombras más chicas
 renderer.setPixelRatio(Math.min(devicePixelRatio, coarse ? 1.5 : 2)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap
@@ -838,7 +860,7 @@ function hiddenFrom(pos) {
 
 // ---------- mensajes anfitrión → todos ----------
 function recv(m) {
-  if (m.t === 'init') { for (const [id, d] of m.texs) setTexData(id, d); m.objs.forEach(upsert); for (const [s, c] of m.ink || []) ribbon(felt, s, c) }
+  if (m.t === 'init') { status(''); for (const [id, d] of m.texs) setTexData(id, d); m.objs.forEach(upsert); for (const [s, c] of m.ink || []) ribbon(felt, s, c) }
   else if (m.t === 'unink') unink(felt)
   else if (m.t === 'players') setPlayers(m.list)
   else if (m.t === 'tex') setTexData(m.id, m.d)
@@ -1769,6 +1791,9 @@ async function getMedia(name) {
   const draw = () => { g.fillStyle = '#22252e'; g.fillRect(0, 0, 320, 240); g.fillStyle = '#ece8df'; g.font = 'bold 36px system-ui'; g.textAlign = 'center'; g.fillText(name, 160, 130, 300) }
   draw(); setInterval(draw, 1000); return c.captureStream(2)
 }
+// Servidores ICE: los mismos que trae PeerJS por defecto (STUN de Google + TURN gratuito compartido). Para más fiabilidad entre países, sumá un TURN propio en MESA_TURN (p. ej. plan gratuito de Metered o Cloudflare)
+const MESA_TURN = []
+const PEER_OPTS = { config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' }, ...MESA_TURN] } }
 async function start(host) {
   const name = $('name').value.trim().slice(0, 20) || 'Jugador'
   const code = host ? Math.random().toString(36).slice(2, 7) : $('code').value.trim().toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -1790,13 +1815,17 @@ async function start(host) {
     players.set(myId, { id: myId, name, seat: SEATS[0] }); sendPlayers()
     setInterval(step, 1000 / 60); setInterval(netTick, 50); setInterval(autosave, 15000); addEventListener('beforeunload', autosave)
     $('bSave').hidden = $('bLoad').hidden = false
-    try { peer = new Peer(myId); peer.on('connection', onConnection); peer.on('call', onCall); peer.on('error', onPeerError) } catch { status('Sin red: mesa solo local') }
+    try { peer = new Peer(myId, PEER_OPTS); peer.on('connection', onConnection); peer.on('call', onCall); peer.on('error', onPeerError) } catch { status('Sin red: mesa solo local') }
   } else {
     status('Conectando…')
-    peer = new Peer(); peer.on('call', onCall); peer.on('error', onPeerError)
+    if (typeof Peer === 'undefined') return status('No cargó PeerJS (unpkg.com bloqueado en tu red). Probá con otra red o recargá.')
+    try { peer = new Peer(undefined, PEER_OPTS) } catch (e) { return status('No pude iniciar la conexión: ' + e.message) }
+    peer.on('call', onCall); peer.on('error', onPeerError)
+    setTimeout(() => { if ($('status').textContent === 'Conectando…') status('No logro conectar con la mesa. Puede ser tu red (probá con otra o con datos móviles) o que el anfitrión no esté. Recargá para reintentar.') }, 20000)
     peer.on('open', id => {
       myId = id; hostConn = peer.connect('mesalibre-' + code, { reliable: true, metadata: { name } })
-      hostConn.on('open', () => status('')); hostConn.on('data', recv); hostConn.on('close', () => status('Se cortó la conexión con el anfitrión'))
+      hostConn.on('open', () => status('Recibiendo la mesa…')); hostConn.on('data', recv); hostConn.on('close', () => status('Se cortó la conexión con el anfitrión'))
+      hostConn.on('error', e => status('Error de conexión con el anfitrión (' + (e.type || e.message) + ')'))
     })
   }
   setInterval(() => { if (ptrDirty) { ptrDirty = false; send({ t: 'ptr', p: [...myPtr] }) } if (walk) send({ t: 'walk', w: [walk.x, walk.z, walk.yaw] }) }, 50)
